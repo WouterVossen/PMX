@@ -18,7 +18,7 @@ st.markdown("### 📰 Market News")
 st.markdown(f"**{selected_date}** – {news_today}")
 
 st.markdown("### 📈 Forward Curve")
-fig, ax = plt.subplots(figsize=(8, 4))  # width, height in inches
+fig, ax = plt.subplots(figsize=(6, 4))  # width, height in inches
 contracts = curve_today['contract']
 mids = (curve_today['bid'] + curve_today['ask']) / 2
 ax.plot(contracts, mids, label="Mid Price", marker='o')
