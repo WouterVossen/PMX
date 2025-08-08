@@ -55,3 +55,28 @@ with st.form("trade_form"):
 
 if submitted:
     st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
+
+import os
+from datetime import datetime
+
+if submitted:
+    st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
+
+    # Prepare trade record
+    trade = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "date": selected_date,
+        "trader": trader,
+        "contract": contract,
+        "side": side,
+        "price": price,
+        "lots": lots
+    }
+
+    # Append to CSV
+    log_file = "data/trader_log_template.csv"
+    log_df = pd.DataFrame([trade])
+    if os.path.exists(log_file):
+        log_df.to_csv(log_file, mode='a', header=False, index=False)
+    else:
+        log_df.to_csv(log_file, index=False)
