@@ -28,7 +28,7 @@ if curve_today.empty or news_today.empty:
     st.error(f"No market data found for {selected_date}. Please check your config or data files.")
 else:
     st.subheader(f"📅 Market Day: {selected_date}")
-    st.markdown("### 📰 News")
+    st.markdown("### 📰 Tradewinds News")
     st.markdown(news_today["headline"].values[0])
 
     st.markdown("### 📈 Forward Curve")
