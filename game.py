@@ -53,9 +53,6 @@ with st.form("trade_form"):
     lots = st.number_input("Lots (days)", min_value=1, step=1)
     submitted = st.form_submit_button("Submit Trade")
 
-if submitted:
-    st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
-
 import os
 from datetime import datetime
 
