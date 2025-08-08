@@ -43,5 +43,15 @@ else:
     plt.tight_layout()
     st.pyplot(fig)
 
-    st.markdown("---")
-    st.markdown("🛠 *To advance the game, update `config.json` with the next date.*")
+st.markdown("### 🧾 Submit Trade")
+
+with st.form("trade_form"):
+    trader = st.text_input("Trader Name")
+    contract = st.selectbox("Contract", options=contracts)
+    side = st.selectbox("Side", ["Buy", "Sell"])
+    price = st.number_input("Price", step=1)
+    lots = st.number_input("Lots (days)", min_value=1, step=1)
+    submitted = st.form_submit_button("Submit Trade")
+
+if submitted:
+    st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
