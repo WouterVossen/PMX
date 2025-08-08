@@ -74,11 +74,10 @@ else:
             df.to_csv(log_file, index=False)
 
     st.markdown("---")
-    st.markdown("🛠 *To advance the game, update `config.json` with the next trading date.*")
 
     st.markdown("🔐 ### Admin Access")
     password = st.text_input("Enter admin password to download trade log", type="password")
-    if password == "freightadmin":
+    if password == "freightadmintrader":
         if os.path.exists(log_file):
             with open(log_file, "rb") as f:
                 st.download_button("📥 Download Trade Log", f, file_name="trader_log.csv")
