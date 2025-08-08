@@ -43,37 +43,40 @@ else:
     plt.tight_layout()
     st.pyplot(fig)
 
-st.markdown("### 🧾 Submit Trade")
+    st.markdown("---")
+    st.markdown("🧾 ### Submit Your Trade")
+    with st.form("trade_form"):
+        trader = st.text_input("Trader Name")
+        contract = st.selectbox("Contract", options=contracts)
+        side = st.selectbox("Side", ["Buy", "Sell"])
+        price = st.number_input("Price", step=1)
+        lots = st.number_input("Lots (days)", min_value=1, step=1)
+        submitted = st.form_submit_button("Submit Trade")
 
-with st.form("trade_form"):
-    trader = st.text_input("Trader Name")
-    contract = st.selectbox("Contract", options=contracts)
-    side = st.selectbox("Side", ["Buy", "Sell"])
-    price = st.number_input("Price", step=1)
-    lots = st.number_input("Lots (days)", min_value=1, step=1)
-    submitted = st.form_submit_button("Submit Trade")
+    log_file = "data/trader_log.csv"
+    if submitted:
+        st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
+        trade = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "date": selected_date,
+            "trader": trader,
+            "contract": contract,
+            "side": side,
+            "price": price,
+            "lots": lots
+        }
+        df = pd.DataFrame([trade])
+        if os.path.exists(log_file):
+            df.to_csv(log_file, mode='a', header=False, index=False)
+        else:
+            df.to_csv(log_file, index=False)
 
-import os
-from datetime import datetime
+    st.markdown("---")
+    st.markdown("🛠 *To advance the game, update `config.json` with the next trading date.*")
 
-if submitted:
-    st.success(f"✅ Trade submitted: {trader} {side} {lots}d of {contract} @ ${price}")
-
-    # Prepare trade record
-    trade = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "date": selected_date,
-        "trader": trader,
-        "contract": contract,
-        "side": side,
-        "price": price,
-        "lots": lots
-    }
-
-    # Append to CSV
-    log_file = "data/trader_log_template.csv"
-    log_df = pd.DataFrame([trade])
-    if os.path.exists(log_file):
-        log_df.to_csv(log_file, mode='a', header=False, index=False)
-    else:
-        log_df.to_csv(log_file, index=False)
+    st.markdown("🔐 ### Admin Access")
+    password = st.text_input("Enter admin password to download trade log", type="password")
+    if password == "freightadmin":
+        if os.path.exists(log_file):
+            with open(log_file, "rb") as f:
+                st.download_button("📥 Download Trade Log", f, file_name="trader_log.csv")
