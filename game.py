@@ -32,7 +32,7 @@ else:
     st.markdown(news_today["headline"].values[0])
 
     st.markdown("### 📈 Forward Curve")
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(4 4))
     contracts = curve_today["contract"]
     mids = (curve_today["bid"] + curve_today["ask"]) / 2
     ax.plot(contracts, mids, marker='o', label="Mid Price")
