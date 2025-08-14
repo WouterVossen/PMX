@@ -6,24 +6,26 @@ import json
 import altair as alt
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Page setup & styling (Suggestion 1)
+# Page setup & styling (Suggestions 1–3)
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Panamax Freight Game", layout="wide")
 
 CARGILL_GREEN = "#007A33"  # primary accent
-BG_GRADIENT = """
+
+# Use a token so we don't fight with Python .format() vs CSS braces
+_BG_CSS = """
 <style>
 /* Background gradient */
-[data-testid="stAppViewContainer"] {
+[data-testid="stAppViewContainer"] {{
   background: radial-gradient(1200px 800px at 20% -10%, #e8f5f0 0%, #f7faf9 40%, #ffffff 100%);
 }
 
 /* Hide Streamlit default menu/footer */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
+#MainMenu {{visibility: hidden;}}
+footer {{visibility: hidden;}}
 
 /* Top header bar */
-.topbar {
+.topbar {{
   position: sticky;
   top: 0;
   z-index: 999;
@@ -33,56 +35,56 @@ footer {visibility: hidden;}
   display: flex;
   gap: 1rem;
   align-items: center;
-}
-.topbar .title {
+}}
+.topbar .title {{
   font-weight: 700; 
   font-size: 1.05rem; 
   color: #0f172a;
-}
-.badge {
-  background: {green};
+}}
+.badge {{
+  background: <<GREEN>>;
   color: white;
   padding: .18rem .5rem;
   border-radius: .5rem;
   font-size: .75rem;
-}
-.card {
+}}
+.card {{
   background: #ffffff;
   border: 1px solid #edf2f7;
   border-radius: 14px;
   padding: 1.0rem 1.2rem;
   box-shadow: 0 2px 8px rgba(16,24,40,.06);
-}
-.section-title {
+}}
+.section-title {{
   font-weight: 700;
   font-size: 1.0rem;
   color: #0f172a;
   margin-bottom: .35rem;
-}
-.news-line {
+}}
+.news-line {{
   display: flex; gap: .5rem; align-items: flex-start;
   padding: .25rem 0;
   border-left: 3px solid transparent;
-}
-.news-line .dot {
-  width: 8px; height: 8px; border-radius: 999px; background: {green}; margin-top: .4rem;
-}
-.small-muted { color: #6b7280; font-size: .82rem; }
-.curve-legend {
+}}
+.news-line .dot {{
+  width: 8px; height: 8px; border-radius: 999px; background: <<GREEN>>; margin-top: .4rem;
+}}
+.small-muted {{ color: #6b7280; font-size: .82rem; }}
+.curve-legend {{
   display:flex; gap: 10px; align-items:center; margin-top: .4rem;
-}
-.legend-dot { width:10px; height:10px; border-radius:999px; display:inline-block; }
-.legend-today { background:{green}; }
-.legend-yday { background:#94a3b8; }
-.legend-band { background:linear-gradient(90deg, rgba(0,122,51,.08), rgba(0,122,51,.08)); border:1px dashed {green}; }
+}}
+.legend-dot {{ width:10px; height:10px; border-radius:999px; display:inline-block; }}
+.legend-today {{ background: <<GREEN>>; }}
+.legend-yday {{ background:#94a3b8; }}
+.legend-band {{ background:linear-gradient(90deg, rgba(0,122,51,.08), rgba(0,122,51,.08)); border:1px dashed <<GREEN>>; }}
 </style>
-""".format(green=CARGILL_GREEN)
-
+"""
+BG_GRADIENT = _BG_CSS.replace("<<GREEN>>", CARGILL_GREEN)
 st.markdown(BG_GRADIENT, unsafe_allow_html=True)
 
 with st.container():
     st.markdown(
-        f"""
+        """
         <div class="topbar">
             <span class="title">📦 Panamax Freight Paper Trading Game</span>
             <span class="badge">Cargill Internal</span>
@@ -101,22 +103,22 @@ selected_date = config.get("current_day")
 curve_df = pd.read_csv("data/forward_curves.csv")
 news_df = pd.read_csv("data/news_stories.csv")
 
-# Ensure consistent types
+# Ensure numeric bid/ask
 for col in ["bid", "ask"]:
     if col in curve_df.columns:
         curve_df[col] = pd.to_numeric(curve_df[col], errors="coerce")
 
-# Compute "yesterday" trading date in the dataset (previous available business day)
-unique_days = (
-    curve_df["date"].dropna().unique().tolist()
-    if "date" in curve_df.columns else []
-)
-try:
-    # Sort by actual date when possible (handles mm/dd/yyyy or m/d/yyyy)
-    unique_days_sorted = sorted(unique_days, key=lambda d: datetime.strptime(d, "%m/%d/%Y"))
-except Exception:
-    # Fallback: lexical sort if formats vary
-    unique_days_sorted = sorted(unique_days)
+# Determine yesterday (previous available business day in file)
+unique_days = curve_df["date"].dropna().unique().tolist()
+def _to_dt(s):
+    try:
+        return datetime.strptime(s, "%m/%d/%Y")
+    except Exception:
+        return None
+pairs = [(d, _to_dt(d)) for d in unique_days]
+pairs = [p for p in pairs if p[1] is not None]
+pairs.sort(key=lambda x: x[1])
+unique_days_sorted = [p[0] for p in pairs]
 
 if selected_date not in unique_days_sorted:
     st.error(f"No market data found for {selected_date}. Please check your config or data files.")
@@ -127,7 +129,6 @@ date_yesterday = unique_days_sorted[idx_today-1] if idx_today > 0 else None
 
 curve_today = curve_df[curve_df["date"] == selected_date].copy()
 curve_yday  = curve_df[curve_df["date"] == date_yesterday].copy() if date_yesterday else pd.DataFrame()
-
 news_today = news_df[news_df["date"] == selected_date]
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -139,20 +140,17 @@ with left:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown(f'<div class="section-title">📅 Market Day: {selected_date}</div>', unsafe_allow_html=True)
 
-    # ── News feed (Suggestion 3)
+    # News feed — headline + update lines (Suggestion 3)
     st.markdown('<div class="section-title">📰 Tradewinds News</div>', unsafe_allow_html=True)
     if news_today.empty:
         st.markdown('<div class="small-muted">No news found for today.</div>', unsafe_allow_html=True)
     else:
-        full_text = news_today["headline"].values[0].strip()
-        # First sentence = headline, rest = updates
-        # Split on period while preserving clarity; handle trailing dots.
-        parts = [p.strip() for p in full_text.replace("—", "—").split(".") if p.strip()]
+        full_text = str(news_today["headline"].values[0]).strip()
+        parts = [p.strip() for p in full_text.split(".") if p.strip()]
         if parts:
             headline = parts[0]
             updates = parts[1:]
             st.markdown(f"**{headline}.**")
-            # "Streaming" lines (no bullets—clean feed vibe)
             for u in updates:
                 st.markdown(
                     f'<div class="news-line"><span class="dot"></span>'
@@ -161,7 +159,6 @@ with left:
                 )
         else:
             st.markdown(full_text)
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 with right:
@@ -185,19 +182,14 @@ with right:
             data_yday = prep(curve_yday, "Yesterday")
             data_plot = pd.concat([data_plot, data_yday], ignore_index=True)
 
-        # Ensure contract ordering as categorical (Oct→Jan, etc.)
+        # Preserve today's contract order
         order = data_today["contract"].tolist()
-        if len(order) >= 2:
-            # Preserve today’s order
+        if order:
             data_plot["contract"] = pd.Categorical(data_plot["contract"], categories=order, ordered=True)
 
-        # Altair chart: bid-ask band + mid lines (Today vs Yesterday) + tooltips
-        base = alt.Chart(data_plot).encode(
-            x=alt.X("contract:O", title="Contract")
-        ).properties(height=300)
-
+        # Bid–ask band (today)
         band = alt.Chart(data_today).mark_area(opacity=0.18, color=CARGILL_GREEN).encode(
-            x="contract:O",
+            x=alt.X("contract:O", title="Contract"),
             y=alt.Y("bid:Q", title="USD / day"),
             y2="ask:Q",
             tooltip=[
@@ -207,8 +199,10 @@ with right:
             ]
         )
 
-        line = base.mark_line(point=True, strokeWidth=2).encode(
-            y="mid:Q",
+        # Mid lines (today vs yesterday)
+        line = alt.Chart(data_plot).mark_line(point=True, strokeWidth=2).encode(
+            x=alt.X("contract:O", title="Contract"),
+            y=alt.Y("mid:Q", title="USD / day"),
             color=alt.Color("series:N", title="Series",
                             scale=alt.Scale(domain=["Today", "Yesterday"],
                                             range=[CARGILL_GREEN, "#94a3b8"])),
@@ -217,14 +211,14 @@ with right:
                 alt.Tooltip("contract:O", title="Contract"),
                 alt.Tooltip("mid:Q", title="Mid", format=",.0f"),
                 alt.Tooltip("bid:Q", title="Bid", format=",.0f"),
-                alt.Tooltip("ask:Q", title="Ask", format=",.0f")
+                alt.Tooltip("ask:Q", title="Ask", format=",.0f"),
             ]
         )
 
-        chart = (band + line).resolve_scale(y='shared').interactive()
+        chart = (band + line).properties(height=300).interactive()
         st.altair_chart(chart, use_container_width=True)
 
-        # Tiny legend badges for clarity
+        # Legend badges
         st.markdown("""
         <div class="curve-legend">
           <span class="legend-dot legend-today"></span><span class="small-muted">Today (Mid)</span>
@@ -236,7 +230,7 @@ with right:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Trade form (unchanged logic, presented in a card)
+# Trade form (same logic, nicer layout)
 # ──────────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🧾 Submit Your Trade</div>', unsafe_allow_html=True)
