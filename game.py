@@ -22,7 +22,7 @@ curve_today = curve_df[curve_df["date"] == selected_date]
 # Global monthly limit (adjustable)
 MAX_MONTHLY_LOTS = 1000
 
-st.title("📦 Panamax Freight Paper Trading Game")
+st.title("🚢 Panamax Freight Paper Trading Game")
 
 if curve_today.empty:
     st.error(f"No market data found for {selected_date}. Please check your config or data files.")
