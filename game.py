@@ -15,23 +15,19 @@ selected_date = config.get("current_day")
 
 # Load data
 curve_df = pd.read_csv("data/forward_curves.csv")
-news_df = pd.read_csv("data/news_stories.csv")
 
 # Filter data for current date
 curve_today = curve_df[curve_df["date"] == selected_date]
-news_today = news_df[news_df["date"] == selected_date]
 
 # Global monthly limit (adjustable)
 MAX_MONTHLY_LOTS = 1000
 
 st.title("📦 Panamax Freight Paper Trading Game")
 
-if curve_today.empty or news_today.empty:
+if curve_today.empty:
     st.error(f"No market data found for {selected_date}. Please check your config or data files.")
 else:
     st.subheader(f"📅 Market Day: {selected_date}")
-    st.markdown("### 📰 Tradewinds News")
-    st.markdown(news_today["headline"].values[0])
 
     st.markdown("### 📈 Forward Curve")
     fig, ax = plt.subplots(figsize=(8, 3))
