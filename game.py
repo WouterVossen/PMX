@@ -1,178 +1,251 @@
-import os
-import io
-import json
-from datetime import datetime
-
-import matplotlib.pyplot as plt
-import pandas as pd
 import streamlit as st
+import pandas as pd
+from datetime import datetime
+import os
+import matplotlib.pyplot as plt
+import json
 
-# ---------------------------
-# Page / theme
-# ---------------------------
+# ==========================
+# Page setup
+# ==========================
 st.set_page_config(page_title="Panamax Freight Game", layout="wide")
 
-# ---------------------------
-# Config & data
-# ---------------------------
-with open("config.json", "r") as f:
-    config = json.load(f)
+DATA_FOLDER = "data"
+CURVE_FILE = os.path.join(DATA_FOLDER, "forward_curves.csv")
+LOG_FILE = os.path.join(DATA_FOLDER, "trader_log.csv")
+CONFIG_FILE = "config.json"
 
-selected_date = config.get("current_day")  # e.g., "9/1/2025"
+# Contracts traded in the game
+MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]
 
-CURVE_FILE = "data/forward_curves.csv"
-NEWS_FILE = "data/news_stories.csv"
-LOG_FILE = "data/trader_log.csv"
+# Risk limits
+PER_MONTH_CAP = 200   # |net| per single month
+SLATE_CAP = 100       # |sum of nets across months|
 
-# Contract universe (labels in forward_curves.csv)
-CONTRACTS = ["Sep", "Oct", "Nov", "Dec"]
+# ==========================
+# Utility: load config & data
+# ==========================
+def read_config_current_day() -> str:
+    with open(CONFIG_FILE, "r") as f:
+        cfg = json.load(f)
+    return cfg.get("current_day")
 
-# Position limits
-MAX_PER_BUCKET = 200   # max net per contract month
-MAX_SLATE = 100        # max net across all four months
+def load_curves_all() -> pd.DataFrame:
+    df = pd.read_csv(CURVE_FILE)
+    # Normalize columns
+    df.columns = [c.strip() for c in df.columns]
+    # Coerce numeric
+    for col in ["bid", "ask"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["contract"] = df["contract"].astype(str).str.strip()
+    df["date"] = df["date"].astype(str).str.strip()
+    return df
 
-# ---------------------------
-# Load datasets
-# ---------------------------
-curve_df = pd.read_csv(CURVE_FILE)
-news_df = pd.read_csv(NEWS_FILE)
+def curves_for_day(df: pd.DataFrame, day: str) -> pd.DataFrame:
+    out = df[df["date"] == day].copy()
+    # keep only game months, sorted
+    out = out[out["contract"].isin(MONTH_ORDER)]
+    out["contract"] = pd.Categorical(out["contract"], MONTH_ORDER, ordered=True)
+    out = out.sort_values("contract")
+    return out
 
-# Normalize date columns to string for exact match
-curve_df["date"] = curve_df["date"].astype(str)
-news_df["date"] = news_df["date"].astype(str)
-
-curve_today = curve_df[curve_df["date"] == str(selected_date)].copy()
-news_today = news_df[news_df["date"] == str(selected_date)].copy()
-
-# ---------------------------
-# Helpers
-# ---------------------------
-def _append_rows(rows: list[dict], path: str):
-    df_new = pd.DataFrame(rows)
-    if os.path.exists(path):
-        df_existing = pd.read_csv(path)
-        df_all = pd.concat([df_existing, df_new], ignore_index=True)
-    else:
-        df_all = df_new
-    df_all.to_csv(path, index=False)
-
-def _ensure_log_schema(df: pd.DataFrame) -> pd.DataFrame:
-    req = [
-        "timestamp","date","trader","type","contract","side","price","lots",
-        "buy_month","sell_month","spread_px","mtm_next","pnl_day"
-    ]
-    for c in req:
-        if c not in df.columns:
-            df[c] = ""
-    # types
-    for c in ["price","lots","spread_px"]:
-        df[c] = df[c].replace("", "0")
-    # lots should be int; others float-able
-    try:
-        df["lots"] = df["lots"].astype(int)
-    except Exception:
-        df["lots"] = pd.to_numeric(df["lots"], errors="coerce").fillna(0).astype(int)
-    for c in ["price","spread_px","mtm_next","pnl_day"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df[req]
-
-def _mid(df_row) -> float:
-    return float((df_row["bid"] + df_row["ask"]) / 2)
-
-def get_today_bid_ask(contract: str):
-    row = curve_today[curve_today["contract"] == contract]
-    if row.empty:
-        return None, None
-    r = row.iloc[0]
-    return float(r["bid"]), float(r["ask"])
-
-def next_mtm_price(contract: str, trade_date_str: str, curves_all: pd.DataFrame, fallback_same_day=False):
-    cdf = curves_all.copy()
-    cdf["date_dt"] = pd.to_datetime(cdf["date"])
-    trade_dt = pd.to_datetime(trade_date_str)
-    later = cdf[(cdf["contract"] == contract) & (cdf["date_dt"] > trade_dt)].sort_values("date_dt")
-    if not later.empty:
-        head = later.iloc[0]
-        return float((head["bid"] + head["ask"]) / 2)
-    if fallback_same_day:
-        same = cdf[(cdf["contract"] == contract) & (cdf["date_dt"] == trade_dt)]
-        if not same.empty:
-            head = same.iloc[0]
-            return float((head["bid"] + head["ask"]) / 2)
-    return None
-
-def compute_positions_asof(trader: str, asof_date: str) -> dict:
-    """Net lots per contract & slate through asof_date (inclusive)."""
+# ==========================
+# Logging / positions helpers
+# ==========================
+def ensure_log_exists():
     if not os.path.exists(LOG_FILE):
-        return {m: 0 for m in CONTRACTS} | {"slate": 0}
-    tl = pd.read_csv(LOG_FILE)
-    if tl.empty:
-        return {m: 0 for m in CONTRACTS} | {"slate": 0}
-    tl["date"] = tl["date"].astype(str)
-    tl = _ensure_log_schema(tl)
-    tl = tl[(tl["trader"] == trader) & (pd.to_datetime(tl["date"]) <= pd.to_datetime(asof_date))]
-    if tl.empty:
-        return {m: 0 for m in CONTRACTS} | {"slate": 0}
+        cols = [
+            "timestamp","date","trader","type",
+            "contract","side","price","lots",
+            "spread_buy","spread_sell","spread_price"
+        ]
+        pd.DataFrame(columns=cols).to_csv(LOG_FILE, index=False)
 
-    net = {m: 0 for m in CONTRACTS}
+def load_log() -> pd.DataFrame:
+    ensure_log_exists()
+    df = pd.read_csv(LOG_FILE)
+    if not df.empty:
+        # Normalize
+        if "lots" in df.columns:
+            df["lots"] = pd.to_numeric(df["lots"], errors="coerce").fillna(0).astype(int)
+        if "price" in df.columns:
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        for c in ["trader","contract","side","type","spread_buy","spread_sell","date","timestamp"]:
+            if c in df.columns:
+                df[c] = df[c].astype(str)
+    return df
 
-    # outrights
-    outs = tl[tl["type"] == "outright"]
-    for _, r in outs.iterrows():
-        if r["contract"] in CONTRACTS:
-            sgn = 1 if str(r["side"]).lower() == "buy" else -1
-            net[r["contract"]] += sgn * int(r["lots"])
+def month_label_from_contract(contract_str: str) -> str:
+    # Contracts are month strings (e.g., "Sep","Oct","Nov","Dec")
+    return str(contract_str)
 
-    # spreads (buy_month long, sell_month short)
-    spr = tl[tl["type"] == "spread"]
-    for _, r in spr.iterrows():
-        bm = str(r["buy_month"])
-        sm = str(r["sell_month"])
-        if bm in CONTRACTS:
-            net[bm] += int(r["lots"])
-        if sm in CONTRACTS:
-            net[sm] -= int(r["lots"])
+def positions_for_trader_mtd(trader: str, upto_date_str: str) -> tuple[dict, int]:
+    """
+    Return (per_month_nets, slate) for a trader for the calendar month of upto_date_str.
+    Outright: Buy +lots / Sell -lots
+    Spread: +lots on buy month / -lots on sell month
+    """
+    logs = load_log()
+    if logs.empty:
+        return {m: 0 for m in MONTH_ORDER}, 0
 
-    slate = sum(net.values())
-    net["slate"] = slate
-    return net
+    # Month filter aligned to upto_date_str month/year
+    try:
+        logs["date_dt"] = pd.to_datetime(logs["date"], errors="coerce")
+        ref = pd.to_datetime(upto_date_str, errors="coerce")
+        logs = logs[(logs["date_dt"].dt.month == ref.month) & (logs["date_dt"].dt.year == ref.year)]
+    except Exception:
+        # Fallback if parsing fails: only exact date match
+        logs = logs[logs["date"] == upto_date_str]
 
-def would_violate_limits(trader: str, asof_date: str, deltas: dict) -> tuple[bool, str]:
-    """deltas = {'Oct': +10, 'Nov': -10, ...} => check MAX_PER_BUCKET and MAX_SLATE."""
-    current = compute_positions_asof(trader, asof_date)
-    trial = {m: current.get(m, 0) + deltas.get(m, 0) for m in CONTRACTS}
-    slate = sum(trial.values())
-    # per bucket
-    offenders = [m for m in CONTRACTS if abs(trial[m]) > MAX_PER_BUCKET]
-    if offenders:
-        return True, f"Per-month limit exceeded ({', '.join(offenders)} would be > {MAX_PER_BUCKET})."
-    if abs(slate) > MAX_SLATE:
-        return True, f"Slate limit exceeded (|{slate}| > {MAX_SLATE})."
-    return False, ""
+    logs = logs[logs["trader"].str.strip().str.lower() == str(trader).strip().lower()]
 
-# ---------------------------
-# UI — header, news, curve
-# ---------------------------
+    per_month = {m: 0 for m in MONTH_ORDER}
+    for _, r in logs.iterrows():
+        ttype = str(r.get("type","")).lower()
+        lots = int(r.get("lots", 0))
+        if ttype == "outright":
+            m = month_label_from_contract(r.get("contract",""))
+            side = str(r.get("side","")).lower()
+            if m in per_month:
+                per_month[m] += lots if side == "buy" else -lots
+        elif ttype == "spread":
+            bm = month_label_from_contract(r.get("spread_buy",""))
+            sm = month_label_from_contract(r.get("spread_sell",""))
+            if bm in per_month:
+                per_month[bm] += lots
+            if sm in per_month:
+                per_month[sm] -= lots
+
+    slate = sum(per_month.values())
+    return per_month, slate
+
+def check_limits_after(trader: str, date_str: str, changes: dict) -> tuple[bool, str]:
+    """
+    changes: {month: delta_lots}
+    Returns (ok, message)
+    """
+    per_month, slate = positions_for_trader_mtd(trader, date_str)
+    new_per_month = per_month.copy()
+    for m, dlt in changes.items():
+        if m in new_per_month:
+            new_per_month[m] += int(dlt)
+    new_slate = sum(new_per_month.values())
+
+    for m, net in new_per_month.items():
+        if abs(net) > PER_MONTH_CAP:
+            return False, f"Per-month limit exceeded in {m}: |{net}| > {PER_MONTH_CAP}."
+    if abs(new_slate) > SLATE_CAP:
+        return False, f"Slate limit exceeded: |{new_slate}| > {SLATE_CAP}."
+    return True, "OK"
+
+def append_log_rows(rows: list[dict]):
+    ensure_log_exists()
+    df = pd.DataFrame(rows)
+    df.to_csv(LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0, index=False)
+
+# ==========================
+# P&L (T+1) helpers
+# ==========================
+def next_mtm_price(contract: str, trade_date_str: str, curves_all: pd.DataFrame) -> float | None:
+    """
+    T+1 mark: earliest available MID price for contract with curve date strictly > trade_date.
+    Returns None if next-day curve not available yet.
+    """
+    try:
+        cdf = curves_all[curves_all["contract"] == contract].copy()
+        cdf["date_dt"] = pd.to_datetime(cdf["date"], errors="coerce")
+        trade_dt = pd.to_datetime(trade_date_str, errors="coerce")
+        cdf = cdf[cdf["date_dt"] > trade_dt].sort_values("date_dt")
+        if cdf.empty:
+            return None
+        head = cdf.iloc[0]
+        return float((head["bid"] + head["ask"]) / 2.0)
+    except Exception:
+        return None
+
+def compute_pnl_Tplus1_tables(curves_all: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Returns:
+      trades_with_pnl: full log with 'mtm_next' + 'pnl_day' on outright legs (spreads informational only)
+      pnl_by_trader_daily: per (date, trader) P&L
+      pnl_by_trader_cum: per trader cumulative P&L
+    P&L logic:
+      pnl_day = (mtm_next - exec_price) * lots * sign, sign=+1 Buy, -1 Sell
+      next-day MTM uses earliest curve strictly after trade date
+    """
+    logs = load_log()
+    if logs.empty:
+        return logs, pd.DataFrame(columns=["date","trader","pnl_day"]), pd.DataFrame(columns=["trader","pnl_cumulative"])
+
+    ou = logs[logs["type"].str.lower() == "outright"].copy()
+    if ou.empty:
+        # No outright legs yet, build trivial outputs
+        trades_with_pnl = logs.copy()
+        trades_with_pnl["mtm_next"] = pd.NA
+        trades_with_pnl["pnl_day"] = pd.NA
+        return trades_with_pnl, pd.DataFrame(columns=["date","trader","pnl_day"]), pd.DataFrame(columns=["trader","pnl_cumulative"])
+
+    ou["mtm_next"] = ou.apply(lambda r: next_mtm_price(str(r["contract"]), str(r["date"]), curves_all), axis=1)
+    sign = ou["side"].str.lower().map({"buy": 1, "sell": -1}).fillna(0)
+    ou["pnl_day"] = (ou["mtm_next"] - ou["price"]) * ou["lots"] * sign
+
+    pnl_by_trader_daily = (
+        ou.groupby(["date","trader"], dropna=False)["pnl_day"]
+          .sum(min_count=1)
+          .reset_index()
+          .sort_values(["date","trader"])
+    )
+
+    pnl_by_trader_cum = (
+        ou.groupby("trader", dropna=False)["pnl_day"]
+          .sum(min_count=1)
+          .reset_index()
+          .rename(columns={"pnl_day":"pnl_cumulative"})
+          .sort_values("pnl_cumulative", ascending=False)
+    )
+
+    merge_cols = ["timestamp","trader","contract","side","price","lots","date"]
+    trades_with_pnl = logs.copy()
+    trades_with_pnl = trades_with_pnl.merge(
+        ou[merge_cols + ["mtm_next","pnl_day"]],
+        how="left",
+        on=merge_cols
+    )
+    return trades_with_pnl, pnl_by_trader_daily, pnl_by_trader_cum
+
+# ==========================
+# Load data for today
+# ==========================
+selected_date = read_config_current_day()
+curve_df_all = load_curves_all()
+curve_today = curves_for_day(curve_df_all, selected_date)
+
 st.title("🚢 Panamax Freight Paper Trading Game")
 
-if curve_today.empty or news_today.empty:
-    st.error(f"No market data found for {selected_date}. Check your config or data files.")
+if curve_today.empty:
+    st.error(f"No market data found for {selected_date}. Please check your config or data files.")
     st.stop()
 
+contracts_today = list(curve_today["contract"])
+bids = dict(zip(curve_today["contract"], curve_today["bid"]))
+asks = dict(zip(curve_today["contract"], curve_today["ask"]))
+
+# ==========================
+# Chart (compact)
+# ==========================
 st.subheader(f"📅 Market Day: {selected_date}")
-
-st.markdown("### 📰 Tradewinds News")
-st.markdown(news_today["headline"].values[0])
-
 st.markdown("### 📈 Forward Curve")
-fig, ax = plt.subplots(figsize=(7, 2.8))  # compact
-contracts = curve_today["contract"]
-mids = (curve_today["bid"] + curve_today["ask"]) / 2
-ax.plot(contracts, mids, marker='o', label="Mid Price")
-ax.fill_between(contracts, curve_today["bid"], curve_today["ask"], alpha=0.2, label="Bid/Ask Spread")
+
+fig, ax = plt.subplots(figsize=(7, 3))
+mids = (curve_today["bid"] + curve_today["ask"]) / 2.0
+ax.plot(curve_today["contract"], mids, marker="o", label="Mid Price")
+ax.fill_between(curve_today["contract"], curve_today["bid"], curve_today["ask"], alpha=0.20, label="Bid/Ask Spread")
+
 for _, row in curve_today.iterrows():
-    ax.text(row["contract"], row["bid"] - 40, f"B: {int(row['bid'])}", ha='center', fontsize=8)
-    ax.text(row["contract"], row["ask"] + 40, f"O: {int(row['ask'])}", ha='center', fontsize=8)
+    ax.text(row["contract"], row["bid"] - 40, f"B: {int(row['bid'])}", ha="center", fontsize=8)
+    ax.text(row["contract"], row["ask"] + 40, f"O: {int(row['ask'])}", ha="center", fontsize=8)
+
 ax.set_ylabel("USD/Day")
 ax.legend(loc="upper right")
 plt.tight_layout()
@@ -180,232 +253,171 @@ st.pyplot(fig)
 
 st.markdown("---")
 
-# ---------------------------
-# Trading forms
-# ---------------------------
-st.markdown("## 🧾 Submit Trades")
+# ==========================
+# Trade entry (Outright + Spread)
+# ==========================
+st.markdown("### 🧾 Submit Your Trades")
 
-# ----- Outright trade -----
-with st.form("ou_form", clear_on_submit=True):
-    c1, c2, c3, c4, c5 = st.columns([1.3, 1, 1, 1, 1])
-    trader_ou = c1.text_input("Trader Name", key="ou_trader")
-    contract_ou = c2.selectbox("Contract", options=list(curve_today["contract"]), key="ou_contract")
-    side_ou = c3.selectbox("Side", ["Buy", "Sell"], key="ou_side")
+# ---------- OUTRIGHT ----------
+st.markdown("**Outright**")
+with st.form("ou_form"):
+    c1, c2, c3, c4 = st.columns([1.2, 1.0, 1.0, 1.2])
 
-    # auto-prefill price from today's bid/offer
-    bid0, ask0 = get_today_bid_ask(contract_ou)
-    default_price_ou = ask0 if side_ou == "Buy" else bid0
-    price_ou = c4.number_input("Price", step=1, value=int(default_price_ou) if default_price_ou else 0, key="ou_price")
-    lots_ou = c5.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
+    ou_contract = c1.selectbox("Contract", options=contracts_today, key="ou_contract")
+    ou_side = c2.selectbox("Side", ["Buy", "Sell"], key="ou_side")
+    ou_lots = c3.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
 
-    submit_ou = st.form_submit_button("Submit Outright Trade")
+    default_ou_price = float(asks[ou_contract]) if ou_side == "Buy" else float(bids[ou_contract])
+    ou_price = c4.number_input("Price (auto-filled)", value=default_ou_price, step=1.0, key="ou_price")
 
-if submit_ou:
-    if not trader_ou:
-        st.error("Enter trader name.")
+    ou_trader = st.text_input("Trader Name", key="ou_trader")
+    ou_submit = st.form_submit_button("Submit Outright Trade")
+
+if ou_submit:
+    if not ou_trader.strip():
+        st.error("Please enter your Trader Name for the outright trade.")
     else:
-        # position limit check
-        delta = {m: 0 for m in CONTRACTS}
-        sgn = 1 if side_ou == "Buy" else -1
-        if contract_ou in delta:
-            delta[contract_ou] = sgn * int(lots_ou)
-        viol, msg = would_violate_limits(trader_ou, selected_date, delta)
-        if viol:
+        # Position impact: Buy +lots / Sell -lots
+        m = month_label_from_contract(ou_contract)
+        delta = {m: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots))}
+        ok, msg = check_limits_after(ou_trader, selected_date, delta)
+        if not ok:
             st.error(f"❌ {msg}")
         else:
-            row = {
+            append_log_rows([{
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
-                "trader": trader_ou,
+                "trader": ou_trader,
                 "type": "outright",
-                "contract": contract_ou,
-                "side": side_ou,
-                "price": float(price_ou),
-                "lots": int(lots_ou),
-                "buy_month": "",
-                "sell_month": "",
-                "spread_px": "",
-                "mtm_next": "",
-                "pnl_day": ""
-            }
-            _append_rows([row], LOG_FILE)
-            st.success(f"✅ Outright: {trader_ou} {side_ou} {lots_ou}d {contract_ou} @ {int(price_ou)}")
+                "contract": ou_contract,
+                "side": ou_side,
+                "price": float(ou_price),
+                "lots": int(ou_lots),
+                "spread_buy": "",
+                "spread_sell": "",
+                "spread_price": ""
+            }])
+            st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {ou_contract} @ {int(ou_price)}")
 
-st.markdown("### 🔁 Calendar Spread")
+st.markdown("---")
 
-# ----- Spread trade -----
-with st.form("sp_form", clear_on_submit=True):
-    s1, s2, s3, s4, s5 = st.columns([1.3, 1, 1, 1, 1])
-    trader_sp = s1.text_input("Trader Name", key="sp_trader")
-    buy_m = s2.selectbox("Buy month", options=list(curve_today["contract"]), key="sp_buy")
-    sell_m = s3.selectbox("Sell month", options=list(curve_today["contract"]), key="sp_sell")
-    lots_sp = s4.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
+# ---------- SPREAD ----------
+st.markdown("**Calendar Spread (Buy one month / Sell another)**")
+with st.form("sp_form"):
+    s1, s2, s3, s4 = st.columns([1.2, 1.2, 1.0, 1.2])
 
-    # auto-prefill spread = (Buy ask – Sell bid)
-    b_bid, b_ask = get_today_bid_ask(buy_m)
-    s_bid, s_ask = get_today_bid_ask(sell_m)
-    default_spread = None
-    if (b_ask is not None) and (s_bid is not None):
-        default_spread = b_ask - s_bid
-    spread_px = s5.number_input("Spread Price (Buy–Sell)", step=1, value=int(default_spread) if default_spread else 0, key="sp_px")
+    sp_buy = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
+    sp_sell = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy], key="sp_sell")
+    sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
 
-    submit_sp = st.form_submit_button("Submit Spread Trade")
+    # Conservative auto-fill: spread = Ask(buy) - Bid(sell)
+    default_spread = float(asks[sp_buy]) - float(bids[sp_sell])
+    sp_price = s4.number_input("Spread Price (Buy–Sell)", value=default_spread, step=1.0, key="sp_price")
 
-if submit_sp:
-    if not trader_sp:
-        st.error("Enter trader name.")
-    elif buy_m == sell_m:
-        st.error("Buy and Sell month must differ.")
+    sp_trader = st.text_input("Trader Name", key="sp_trader")
+    sp_submit = st.form_submit_button("Submit Spread Trade")
+
+if sp_submit:
+    if sp_buy == sp_sell:
+        st.error("Choose two different months for a spread.")
+    elif not sp_trader.strip():
+        st.error("Please enter your Trader Name for the spread.")
     else:
-        delta = {m: 0 for m in CONTRACTS}
-        # long buy_m, short sell_m
-        if buy_m in delta:  delta[buy_m]  += int(lots_sp)
-        if sell_m in delta: delta[sell_m] -= int(lots_sp)
-        viol, msg = would_violate_limits(trader_sp, selected_date, delta)
-        if viol:
+        # Effects: +lots on buy month, -lots on sell month
+        bm = month_label_from_contract(sp_buy)
+        sm = month_label_from_contract(sp_sell)
+        delta = {bm: int(sp_lots), sm: -int(sp_lots)}
+        ok, msg = check_limits_after(sp_trader, selected_date, delta)
+        if not ok:
             st.error(f"❌ {msg}")
         else:
-            row = {
+            # Log spread summary row
+            append_log_rows([{
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
-                "trader": trader_sp,
+                "trader": sp_trader,
                 "type": "spread",
                 "contract": "",
                 "side": "",
                 "price": "",
-                "lots": int(lots_sp),
-                "buy_month": buy_m,
-                "sell_month": sell_m,
-                "spread_px": float(spread_px),
-                "mtm_next": "",
-                "pnl_day": ""
-            }
-            _append_rows([row], LOG_FILE)
-            st.success(f"✅ Spread: {trader_sp} BUY {buy_m} / SELL {sell_m} {lots_sp}d @ {int(spread_px)}")
+                "lots": int(sp_lots),
+                "spread_buy": sp_buy,
+                "spread_sell": sp_sell,
+                "spread_price": float(sp_price)
+            }])
+            # Log both legs as outrights (auditability and P&L on legs)
+            append_log_rows([
+                {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "date": selected_date,
+                    "trader": sp_trader,
+                    "type": "outright",
+                    "contract": sp_buy,
+                    "side": "Buy",
+                    "price": float(asks[sp_buy]),
+                    "lots": int(sp_lots),
+                    "spread_buy": "",
+                    "spread_sell": "",
+                    "spread_price": ""
+                },
+                {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "date": selected_date,
+                    "trader": sp_trader,
+                    "type": "outright",
+                    "contract": sp_sell,
+                    "side": "Sell",
+                    "price": float(bids[sp_sell]),
+                    "lots": int(sp_lots),
+                    "spread_buy": "",
+                    "spread_sell": "",
+                    "spread_price": ""
+                }
+            ])
+            st.success(f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}")
 
 st.markdown("---")
 
-# ---------------------------
-# Repair tool
-# ---------------------------
-st.markdown("### 🧹 Repair Trade Log (backfill missing dates/schema)")
-if os.path.exists(LOG_FILE):
-    if st.button("Repair now"):
-        tl = pd.read_csv(LOG_FILE, dtype=str).fillna("")
-        missing_date = (tl.get("date", "").astype(str).str.strip() == "")
-        fixed = int(missing_date.sum()) if isinstance(missing_date, pd.Series) else 0
-        if "date" not in tl.columns:
-            tl["date"] = ""
-            fixed = len(tl)
-        tl.loc[tl["date"].astype(str).str.strip() == "", "date"] = str(selected_date)
-        tl = _ensure_log_schema(tl)
-        tl.to_csv(LOG_FILE, index=False)
-        st.success(f"Repaired {fixed} row(s) with missing dates and normalized columns.")
+# ==========================
+# Admin download (with T+1 P&L)
+# ==========================
+st.markdown("🔐 **Admin Access**")
+password = st.text_input("Enter admin password to download trade log & PnL", type="password")
 
-# ---------------------------
-# Admin downloads (log + P&L)
-# ---------------------------
-st.markdown("### 🔐 Admin Access")
-pwd = st.text_input("Enter admin password", type="password")
-if pwd == "freightadmintrader":
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "rb") as f:
-            st.download_button("📥 Download Trade Log", f, file_name="trader_log.csv")
+if password == "freightadmintrader":
+    trades_with_pnl, pnl_by_trader_daily, pnl_by_trader_cum = compute_pnl_Tplus1_tables(curve_df_all)
 
-        # ---- Compute T+1 P&L and offer download ----
-        tl = pd.read_csv(LOG_FILE)
-        if not tl.empty:
-            tl = _ensure_log_schema(tl)
-            curves_all = pd.read_csv(CURVE_FILE)
-            curves_all["date"] = curves_all["date"].astype(str)
-
-            # Build P&L rows per trade (day P&L only; cumulative can be summed per trader)
-            pnl_rows = []
-            pending = 0
-
-            for _, r in tl.iterrows():
-                tdate = str(r["date"])
-                lots = int(r["lots"]) if pd.notna(r["lots"]) else 0
-
-                if str(r["type"]) == "outright":
-                    con = str(r["contract"])
-                    side = str(r["side"]).lower()
-                    trade_px = float(r["price"]) if pd.notna(r["price"]) else None
-                    mtm_next = next_mtm_price(con, tdate, curves_all, fallback_same_day=False)
-                    if mtm_next is None or trade_px is None:
-                        pending += 1
-                        pnl = None
-                    else:
-                        sgn = 1 if side == "buy" else -1
-                        pnl = (mtm_next - trade_px) * sgn * lots
-                    pnl_rows.append({
-                        "timestamp": r["timestamp"],
-                        "date": tdate,
-                        "trader": r["trader"],
-                        "type": "outright",
-                        "contract": con,
-                        "side": r["side"],
-                        "price": trade_px,
-                        "lots": lots,
-                        "buy_month": "",
-                        "sell_month": "",
-                        "spread_px": "",
-                        "mtm_next": mtm_next,
-                        "pnl_day": pnl
-                    })
-
-                else:  # spread
-                    bm = str(r["buy_month"])
-                    sm = str(r["sell_month"])
-                    spx = float(r["spread_px"]) if pd.notna(r["spread_px"]) else None
-                    mtm_b = next_mtm_price(bm, tdate, curves_all, fallback_same_day=False)
-                    mtm_s = next_mtm_price(sm, tdate, curves_all, fallback_same_day=False)
-                    if (mtm_b is None) or (mtm_s is None) or (spx is None):
-                        pending += 1
-                        pnl = None
-                        mtm_next = None
-                    else:
-                        # MTM spread (Buy-Sell)
-                        mtm_spread_next = mtm_b - mtm_s
-                        pnl = (mtm_spread_next - spx) * lots
-                        mtm_next = mtm_spread_next
-
-                    pnl_rows.append({
-                        "timestamp": r["timestamp"],
-                        "date": tdate,
-                        "trader": r["trader"],
-                        "type": "spread",
-                        "contract": "",
-                        "side": "",
-                        "price": "",
-                        "lots": lots,
-                        "buy_month": bm,
-                        "sell_month": sm,
-                        "spread_px": spx,
-                        "mtm_next": mtm_next,
-                        "pnl_day": pnl
-                    })
-
-            pnl_df = pd.DataFrame(pnl_rows)
-            # also provide trader-level daily & cumulative
-            if not pnl_df.empty:
-                daily = pnl_df.groupby(["date", "trader"], dropna=False)["pnl_day"].sum(min_count=1).reset_index()
-                daily = daily.sort_values(["trader", "date"])
-                daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum(min_count=1)
-
-                # Package both sheets in one CSV (stacked with markers)
-                out = io.StringIO()
-                out.write("# Trades with T+1 P&L\n")
-                pnl_df.to_csv(out, index=False)
-                out.write("\n# Daily & Cumulative per Trader\n")
-                daily.to_csv(out, index=False)
-                st.download_button("📊 Download P&L (CSV)", data=out.getvalue().encode("utf-8"),
-                                   file_name="pnl_results.csv")
-
-            if pending > 0:
-                st.warning("Some trades have no next-day curve yet (P&L pending). "
-                           "Upload the next day’s forward_curves to finalize those rows.")
+    if trades_with_pnl.empty:
+        st.info("No trades logged yet.")
     else:
-        st.info("No trades yet.")
-else:
-    st.caption("Enter admin password to access downloads.")
+        csv_trades = trades_with_pnl.to_csv(index=False).encode("utf-8")
+        csv_daily  = pnl_by_trader_daily.to_csv(index=False).encode("utf-8")
+        csv_cum    = pnl_by_trader_cum.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "📥 Download Trades_With_DailyPnL.csv",
+            data=csv_trades,
+            file_name="Trades_With_DailyPnL.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        st.download_button(
+            "📥 Download PnL_By_Trader_Daily.csv",
+            data=csv_daily,
+            file_name="PnL_By_Trader_Daily.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        st.download_button(
+            "📥 Download PnL_By_Trader_Cumulative.csv",
+            data=csv_cum,
+            file_name="PnL_By_Trader_Cumulative.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        if trades_with_pnl["mtm_next"].isna().any():
+            st.warning(
+                "Some trades have no next-day curve yet (P&L pending). "
+                "Upload the next day’s forward_curves to finalize those rows."
+            )
