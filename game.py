@@ -166,16 +166,6 @@ if not trader:
     st.info("Enter your name to enable trade tickets.")
     st.stop()
 
-# Compute current nets for display
-current_nets = net_positions_for_trader(trader, selected_date)
-slate_now = sum(current_nets[m] for m in ALLOWED_CONTRACTS)
-
-with st.expander("📊 Your Current Net Positions (month-to-date)", expanded=True):
-    cols = st.columns(len(ALLOWED_CONTRACTS) + 1)
-    for i, m in enumerate(ALLOWED_CONTRACTS):
-        cols[i].metric(m, f"{current_nets.get(m, 0)}")
-    cols[-1].metric("Slate", f"{slate_now}")
-
 st.divider()
 
 # ----- Outright form -----
