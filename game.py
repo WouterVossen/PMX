@@ -66,6 +66,77 @@ SLATE_CAP = 100       # |sum of net across months|
 
 MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]  # target game months
 
+# ==========================
+# Positions sheet utilities (persistent per-trader buckets)
+# ==========================
+POS_FILE = "data/positions.csv"
+
+def _ensure_positions_exists():
+    cols = ["trader"] + MONTH_ORDER + ["slate"]
+    if not os.path.exists(POS_FILE):
+        pd.DataFrame(columns=cols).to_csv(POS_FILE, index=False)
+
+def _load_positions():
+    _ensure_positions_exists()
+    df = pd.read_csv(POS_FILE)
+    # Normalize types / missing columns
+    for m in MONTH_ORDER:
+        if m not in df.columns:
+            df[m] = 0
+        df[m] = pd.to_numeric(df[m], errors="coerce").fillna(0).astype(int)
+    if "slate" not in df.columns:
+        df["slate"] = df[MONTH_ORDER].sum(axis=1)
+    return df
+
+def _save_positions(df: pd.DataFrame):
+    # Recompute slate before saving
+    if not df.empty:
+        for m in MONTH_ORDER:
+            df[m] = pd.to_numeric(df[m], errors="coerce").fillna(0).astype(int)
+        df["slate"] = df[MONTH_ORDER].sum(axis=1).astype(int)
+    df.to_csv(POS_FILE, index=False)
+
+def _get_trader_positions(trader: str):
+    """
+    Returns (per_month_dict, slate_int). Creates a flat-zero row for new traders.
+    """
+    df = _load_positions()
+    mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+    if not mask.any():
+        # Create new trader row
+        new = {"trader": trader}
+        new.update({m: 0 for m in MONTH_ORDER})
+        new["slate"] = 0
+        df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+        _save_positions(df)
+        return {m: 0 for m in MONTH_ORDER}, 0
+
+    row = df[mask].iloc[0]
+    per_month = {m: int(row[m]) for m in MONTH_ORDER}
+    slate = int(row.get("slate", sum(per_month.values())))
+    return per_month, slate
+
+def _apply_position_changes(trader: str, changes: dict):
+    """
+    Apply delta lots per month (positive long / negative short) to the positions sheet.
+    """
+    df = _load_positions()
+    mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+    if not mask.any():
+        # Initialize if absent
+        new = {"trader": trader}
+        new.update({m: 0 for m in MONTH_ORDER})
+        new["slate"] = 0
+        df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+        mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+
+    idx = df[mask].index[0]
+    for m, d in changes.items():
+        if m in MONTH_ORDER:
+            df.at[idx, m] = int(df.at[idx, m]) + int(d)
+
+    _save_positions(df)
+
 def _ensure_log_exists():
     cols = [
         "timestamp","date","trader","type",
@@ -129,15 +200,17 @@ def _positions_for_trader_mtd(trader: str, upto_date_str: str):
 
 def _check_limits_after(trader: str, date_str: str, changes: dict):
     """
-    changes: dict of {month: delta_lots}, positive for long, negative for short.
+    Check proposed deltas against the persistent positions sheet (ignores date).
+    changes: {month: delta_lots}
     Returns (ok: bool, message: str)
     """
-    per_month, slate = _positions_for_trader_mtd(trader, date_str)
-    # apply changes
+    per_month, _ = _get_trader_positions(trader)
+    # Simulate new positions
     new_per_month = per_month.copy()
     for m, dlt in changes.items():
         if m in new_per_month:
-            new_per_month[m] += dlt
+            new_per_month[m] += int(dlt)
+
     new_slate = sum(new_per_month.values())
 
     # Per-month cap
@@ -201,6 +274,8 @@ if ou_submit:
                 "spread_price": ""
             })
             st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {ou_contract} @ {int(ou_price)}")
+            # Update persistent positions sheet
+            _apply_position_changes(ou_trader, { _month_from_contract(ou_contract): (int(ou_lots) if ou_side == "Buy" else -int(ou_lots)) })
 
 st.markdown("---")
 
@@ -279,6 +354,11 @@ if sp_submit:
             st.success(
                 f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}"
             )
+            # Update persistent positions sheet once with net effect (avoid double count of audit legs)
+            _apply_position_changes(sp_trader, {
+                _month_from_contract(sp_buy):  int(sp_lots),
+                _month_from_contract(sp_sell): -int(sp_lots)
+            })
 
 st.markdown("---")
 
