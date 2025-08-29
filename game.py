@@ -11,16 +11,23 @@ import json
 st.set_page_config(page_title="Panamax Freight Game", layout="wide")
 
 # --------------------------
+# Absolute data paths (prevents day-to-day resets from CWD changes)
+# --------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# --------------------------
 # Load config (current trading day)
 # --------------------------
-with open("config.json", "r") as f:
+with open(os.path.join(BASE_DIR, "config.json"), "r") as f:
     config = json.load(f)
 selected_date = config.get("current_day")  # e.g., "9/1/2025" to match CSV format
 
 # --------------------------
 # Load forward curve (for the selected day only)
 # --------------------------
-curve_df = pd.read_csv("data/forward_curves.csv")
+curve_df = pd.read_csv(os.path.join(DATA_DIR, "forward_curves.csv"))
 curve_today = curve_df[curve_df["date"] == selected_date].copy()
 
 st.title("🚢 Panamax Freight Paper Trading Game")
@@ -60,7 +67,7 @@ st.markdown("---")
 # Position & risk utilities
 # ==========================
 
-LOG_FILE = "data/trader_log.csv"
+LOG_FILE = os.path.join(DATA_DIR, "trader_log.csv")
 PER_MONTH_CAP = 200   # |net| per single contract month
 SLATE_CAP = 100       # |sum of net across months|
 
@@ -69,28 +76,37 @@ MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]  # target game months
 # ==========================
 # Positions sheet utilities (persistent per-trader buckets)
 # ==========================
-POS_FILE = "data/positions.csv"
+POS_FILE = os.path.join(DATA_DIR, "positions.csv")
+
+def _norm_trader_key(trader: str) -> str:
+    return str(trader).strip().lower()
 
 def _ensure_positions_exists():
-    cols = ["trader"] + MONTH_ORDER + ["slate"]
+    cols = ["trader", "trader_key"] + MONTH_ORDER + ["slate"]
     if not os.path.exists(POS_FILE):
         pd.DataFrame(columns=cols).to_csv(POS_FILE, index=False)
 
 def _load_positions():
     _ensure_positions_exists()
     df = pd.read_csv(POS_FILE)
-    # Normalize types / missing columns
+    # Ensure columns
+    if "trader_key" not in df.columns:
+        df["trader_key"] = df["trader"].astype(str).map(_norm_trader_key)
     for m in MONTH_ORDER:
         if m not in df.columns:
             df[m] = 0
         df[m] = pd.to_numeric(df[m], errors="coerce").fillna(0).astype(int)
     if "slate" not in df.columns:
-        df["slate"] = df[MONTH_ORDER].sum(axis=1)
+        df["slate"] = df[MONTH_ORDER].sum(axis=1).astype(int)
+    # Normalize types
+    df["trader"] = df["trader"].astype(str)
+    df["trader_key"] = df["trader_key"].astype(str)
     return df
 
 def _save_positions(df: pd.DataFrame):
-    # Recompute slate before saving
     if not df.empty:
+        if "trader_key" not in df.columns:
+            df["trader_key"] = df["trader"].astype(str).map(_norm_trader_key)
         for m in MONTH_ORDER:
             df[m] = pd.to_numeric(df[m], errors="coerce").fillna(0).astype(int)
         df["slate"] = df[MONTH_ORDER].sum(axis=1).astype(int)
@@ -101,10 +117,11 @@ def _get_trader_positions(trader: str):
     Returns (per_month_dict, slate_int). Creates a flat-zero row for new traders.
     """
     df = _load_positions()
-    mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+    key = _norm_trader_key(trader)
+    mask = df["trader_key"] == key
     if not mask.any():
         # Create new trader row
-        new = {"trader": trader}
+        new = {"trader": trader, "trader_key": key}
         new.update({m: 0 for m in MONTH_ORDER})
         new["slate"] = 0
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
@@ -121,14 +138,15 @@ def _apply_position_changes(trader: str, changes: dict):
     Apply delta lots per month (positive long / negative short) to the positions sheet.
     """
     df = _load_positions()
-    mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+    key = _norm_trader_key(trader)
+    mask = df["trader_key"] == key
     if not mask.any():
         # Initialize if absent
-        new = {"trader": trader}
+        new = {"trader": trader, "trader_key": key}
         new.update({m: 0 for m in MONTH_ORDER})
         new["slate"] = 0
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
-        mask = df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()
+        mask = df["trader_key"] == key
 
     idx = df[mask].index[0]
     for m, d in changes.items():
@@ -158,8 +176,7 @@ def _month_from_contract(contract_str: str) -> str:
 
 def _positions_for_trader_mtd(trader: str, upto_date_str: str):
     """
-    Return dict of net lots per month (Sep/Oct/Nov/Dec) and slate net,
-    including only trades with log 'date' in the same month & year as selected_date.
+    Legacy helper (unused for limits now), kept intact.
     """
     df = _load_log_df()
     if df.empty:
@@ -172,7 +189,6 @@ def _positions_for_trader_mtd(trader: str, upto_date_str: str):
         same_month = (df["date_dt"].dt.month == selected_dt.month) & (df["date_dt"].dt.year == selected_dt.year)
         df = df[same_month]
     except Exception:
-        # if parsing fails, fall back to using the exact string match
         df = df[df["date"] == upto_date_str]
 
     df = df[df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()]
