@@ -82,12 +82,10 @@ def _canon_month(s: str) -> str:
     t = str(s).strip()
     if not t:
         return ""
-    # If already exact, keep it
     if t in MONTH_ORDER:
         return t
-    # Try first 3 letters
     key = t[:3].lower()
-    return _CANON_MAP.get(key, t)  # fallback to original if unknown
+    return _CANON_MAP.get(key, t)
 
 # ==========================
 # Positions sheet utilities (persistent per-trader buckets)
@@ -105,7 +103,6 @@ def _ensure_positions_exists():
 def _load_positions():
     _ensure_positions_exists()
     df = pd.read_csv(POS_FILE)
-    # Ensure columns
     if "trader_key" not in df.columns:
         df["trader_key"] = df["trader"].astype(str).map(_norm_trader_key)
     for m in MONTH_ORDER:
@@ -114,7 +111,6 @@ def _load_positions():
         df[m] = pd.to_numeric(df[m], errors="coerce").fillna(0).astype(int)
     if "slate" not in df.columns:
         df["slate"] = df[MONTH_ORDER].sum(axis=1).astype(int)
-    # Normalize types
     df["trader"] = df["trader"].astype(str)
     df["trader_key"] = df["trader_key"].astype(str)
     return df
@@ -129,48 +125,36 @@ def _save_positions(df: pd.DataFrame):
     df.to_csv(POS_FILE, index=False)
 
 def _get_trader_positions(trader: str):
-    """
-    Returns (per_month_dict, slate_int). Creates a flat-zero row for new traders.
-    """
     df = _load_positions()
     key = _norm_trader_key(trader)
     mask = df["trader_key"] == key
     if not mask.any():
-        # Create new trader row
         new = {"trader": trader, "trader_key": key}
         new.update({m: 0 for m in MONTH_ORDER})
         new["slate"] = 0
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         _save_positions(df)
         return {m: 0 for m in MONTH_ORDER}, 0
-
     row = df[mask].iloc[0]
     per_month = {m: int(row[m]) for m in MONTH_ORDER}
     slate = int(row.get("slate", sum(per_month.values())))
     return per_month, slate
 
 def _apply_position_changes(trader: str, changes: dict):
-    """
-    Apply delta lots per month (positive long / negative short) to the positions sheet.
-    'changes' keys are canonicalized through _canon_month.
-    """
     df = _load_positions()
     key = _norm_trader_key(trader)
     mask = df["trader_key"] == key
     if not mask.any():
-        # Initialize if absent
         new = {"trader": trader, "trader_key": key}
         new.update({m: 0 for m in MONTH_ORDER})
         new["slate"] = 0
         df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
         mask = df["trader_key"] == key
-
     idx = df[mask].index[0]
     for m, d in changes.items():
         cm = _canon_month(m)
         if cm in MONTH_ORDER:
             df.at[idx, cm] = int(df.at[idx, cm]) + int(d)
-
     _save_positions(df)
 
 def _ensure_log_exists():
@@ -185,21 +169,16 @@ def _ensure_log_exists():
 def _load_log_df():
     _ensure_log_exists()
     df = pd.read_csv(LOG_FILE)
-    # keep date parsing tolerant (the log’s date is game-day string)
     return df
 
 def _month_from_contract(contract_str: str) -> str:
-    # Canonicalize any input like "Oct", "OCT", "October", "Oct " -> "Oct"
     return _canon_month(contract_str)
 
 def _positions_for_trader_mtd(trader: str, upto_date_str: str):
-    """
-    Legacy helper (unused for limits now), kept intact.
-    """
+    # legacy helper (not used for limits)
     df = _load_log_df()
     if df.empty:
         return {m: 0 for m in MONTH_ORDER}, 0
-
     try:
         df["date_dt"] = pd.to_datetime(df["date"])
         selected_dt = pd.to_datetime(upto_date_str)
@@ -207,11 +186,8 @@ def _positions_for_trader_mtd(trader: str, upto_date_str: str):
         df = df[same_month]
     except Exception:
         df = df[df["date"] == upto_date_str]
-
     df = df[df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()]
-
     per_month = {m: 0 for m in MONTH_ORDER}
-
     for _, r in df.iterrows():
         ttype = str(r.get("type","")).lower()
         lots = int(r.get("lots", 0))
@@ -227,35 +203,30 @@ def _positions_for_trader_mtd(trader: str, upto_date_str: str):
                 per_month[buy_m] += lots
             if sell_m in per_month:
                 per_month[sell_m] -= lots
-
     slate = sum(per_month.values())
     return per_month, slate
 
 def _check_limits_after(trader: str, date_str: str, changes: dict):
     """
-    Check proposed deltas against the persistent positions sheet (ignores date).
-    changes: {month: delta_lots}  (months are canonicalized)
-    Returns (ok: bool, message: str)
+    Enforce limits against the live positions sheet (same buckets for outrights & spreads).
+    changes: {month: delta_lots}  (months canonicalized)
     """
     per_month, _ = _get_trader_positions(trader)
-    # Simulate new positions with canonical months
+    # simulate
     new_per_month = per_month.copy()
     for m, dlt in changes.items():
         cm = _canon_month(m)
         if cm in new_per_month:
             new_per_month[cm] += int(dlt)
-
     new_slate = sum(new_per_month.values())
 
-    # Per-month cap
+    # per-month cap
     for m, net in new_per_month.items():
         if abs(net) > PER_MONTH_CAP:
             return False, f"Per-month limit exceeded in {m}: |{net}| > {PER_MONTH_CAP}."
-
-    # Slate cap
+    # slate cap
     if abs(new_slate) > SLATE_CAP:
         return False, f"Slate limit exceeded: |{new_slate}| > {SLATE_CAP}."
-
     return True, "OK"
 
 def _append_log_row(row: dict):
@@ -273,7 +244,6 @@ st.markdown("**Outright**")
 with st.form("ou_form"):
     c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
 
-    # Canonicalize select inputs on the way out
     ou_contract = c1.selectbox("Contract", options=contracts_today, key="ou_contract")
     ou_side = c2.selectbox("Side", ["Buy", "Sell"], key="ou_side")
     ou_lots = c3.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
@@ -293,7 +263,6 @@ if ou_submit:
         if cm not in MONTH_ORDER:
             st.error(f"Unknown month/contract '{ou_contract}'.")
         else:
-            # Position impact (canonicalized)
             delta = { cm: (ou_lots if ou_side == "Buy" else -ou_lots) }
             ok, msg = _check_limits_after(ou_trader, selected_date, delta)
             if not ok:
@@ -304,7 +273,7 @@ if ou_submit:
                     "date": selected_date,
                     "trader": ou_trader,
                     "type": "outright",
-                    "contract": cm,  # store canonical
+                    "contract": cm,
                     "side": ou_side,
                     "price": ou_price,
                     "lots": int(ou_lots),
@@ -313,7 +282,6 @@ if ou_submit:
                     "spread_price": ""
                 })
                 st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(ou_price)}")
-                # Update persistent positions sheet
                 _apply_position_changes(ou_trader, { cm: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots)) })
 
 st.markdown("---")
@@ -324,7 +292,6 @@ with st.form("sp_form"):
     s1, s2, s3, s4 = st.columns([1.2, 1.2, 1, 1.2])
 
     sp_buy_raw = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
-    # Dependently filter sell options but still canonicalize later
     sp_sell_raw = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy_raw], key="sp_sell")
     sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
 
@@ -346,13 +313,13 @@ if sp_submit:
     elif not sp_trader.strip():
         st.error("Please enter your Trader Name for the spread.")
     else:
-        # Position impact: +lots on buy month, -lots on sell month (canonicalized)
+        # HARD LIMIT ENFORCEMENT: same buckets as outrights
         delta = { sp_buy: int(sp_lots), sp_sell: -int(sp_lots) }
         ok, msg = _check_limits_after(sp_trader, selected_date, delta)
         if not ok:
             st.error(f"❌ {msg}")
         else:
-            # Log spread summary row (store canonical months)
+            # Log spread summary row (canonical months)
             _append_log_row({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
@@ -366,7 +333,7 @@ if sp_submit:
                 "spread_sell": sp_sell,
                 "spread_price": sp_price
             })
-            # And log both legs as outright for auditability of positions (canonical)
+            # Log outright legs (audit only)
             _append_log_row({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
@@ -396,7 +363,7 @@ if sp_submit:
             st.success(
                 f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}"
             )
-            # Update persistent positions sheet once with net effect (avoid double count of audit legs)
+            # Apply net effect to the same live buckets
             _apply_position_changes(sp_trader, { sp_buy:  int(sp_lots), sp_sell: -int(sp_lots) })
 
 st.markdown("---")
