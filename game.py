@@ -18,7 +18,7 @@ st.set_page_config(page_title="Panamax Freight Game", layout="wide")
 with open("config.json", "r") as f:
     config = json.load(f)
 
-selected_date = str(config.get("current_day"))  # e.g., "9/1/2025"
+selected_date = config.get("current_day")  # e.g., "9/1/2025"
 
 CURVE_FILE = "data/forward_curves.csv"
 NEWS_FILE = "data/news_stories.csv"
@@ -30,13 +30,6 @@ CONTRACTS = ["Sep", "Oct", "Nov", "Dec"]
 # Position limits
 MAX_PER_BUCKET = 200   # max net per contract month
 MAX_SLATE = 100        # max net across all four months
-
-# ---------------------------
-# Safe datetime parsing
-# ---------------------------
-def parse_dt(x):
-    """Safely parse dates; return pandas Timestamp or NaT."""
-    return pd.to_datetime(str(x), errors="coerce", infer_datetime_format=True)
 
 # ---------------------------
 # Load datasets
@@ -74,6 +67,7 @@ def _ensure_log_schema(df: pd.DataFrame) -> pd.DataFrame:
     # types
     for c in ["price","lots","spread_px"]:
         df[c] = df[c].replace("", "0")
+    # lots should be int; others float-able
     try:
         df["lots"] = df["lots"].astype(int)
     except Exception:
@@ -94,8 +88,8 @@ def get_today_bid_ask(contract: str):
 
 def next_mtm_price(contract: str, trade_date_str: str, curves_all: pd.DataFrame, fallback_same_day=False):
     cdf = curves_all.copy()
-    cdf["date_dt"] = parse_dt(cdf["date"])
-    trade_dt = parse_dt(trade_date_str)
+    cdf["date_dt"] = pd.to_datetime(cdf["date"])
+    trade_dt = pd.to_datetime(trade_date_str)
     later = cdf[(cdf["contract"] == contract) & (cdf["date_dt"] > trade_dt)].sort_values("date_dt")
     if not later.empty:
         head = later.iloc[0]
@@ -108,7 +102,7 @@ def next_mtm_price(contract: str, trade_date_str: str, curves_all: pd.DataFrame,
     return None
 
 def compute_positions_asof(trader: str, asof_date: str) -> dict:
-    """Net lots per contract & slate through asof_date (inclusive). Robust to bad dates."""
+    """Net lots per contract & slate through asof_date (inclusive)."""
     if not os.path.exists(LOG_FILE):
         return {m: 0 for m in CONTRACTS} | {"slate": 0}
     tl = pd.read_csv(LOG_FILE)
@@ -116,10 +110,7 @@ def compute_positions_asof(trader: str, asof_date: str) -> dict:
         return {m: 0 for m in CONTRACTS} | {"slate": 0}
     tl["date"] = tl["date"].astype(str)
     tl = _ensure_log_schema(tl)
-
-    tl["date_dt"] = parse_dt(tl["date"])
-    asof_dt = parse_dt(asof_date)
-    tl = tl[(tl["trader"] == trader) & (tl["date_dt"].notna()) & (tl["date_dt"] <= asof_dt)]
+    tl = tl[(tl["trader"] == trader) & (pd.to_datetime(tl["date"]) <= pd.to_datetime(asof_date))]
     if tl.empty:
         return {m: 0 for m in CONTRACTS} | {"slate": 0}
 
@@ -151,6 +142,7 @@ def would_violate_limits(trader: str, asof_date: str, deltas: dict) -> tuple[boo
     current = compute_positions_asof(trader, asof_date)
     trial = {m: current.get(m, 0) + deltas.get(m, 0) for m in CONTRACTS}
     slate = sum(trial.values())
+    # per bucket
     offenders = [m for m in CONTRACTS if abs(trial[m]) > MAX_PER_BUCKET]
     if offenders:
         return True, f"Per-month limit exceeded ({', '.join(offenders)} would be > {MAX_PER_BUCKET})."
@@ -201,11 +193,9 @@ with st.form("ou_form", clear_on_submit=True):
     side_ou = c3.selectbox("Side", ["Buy", "Sell"], key="ou_side")
 
     # auto-prefill price from today's bid/offer
-    def _default_ou_price():
-        b, a = get_today_bid_ask(contract_ou)
-        return int(a if side_ou == "Buy" else b) if (b is not None and a is not None) else 0
-
-    price_ou = c4.number_input("Price", step=1, value=_default_ou_price(), key="ou_price")
+    bid0, ask0 = get_today_bid_ask(contract_ou)
+    default_price_ou = ask0 if side_ou == "Buy" else bid0
+    price_ou = c4.number_input("Price", step=1, value=int(default_price_ou) if default_price_ou else 0, key="ou_price")
     lots_ou = c5.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
 
     submit_ou = st.form_submit_button("Submit Outright Trade")
@@ -214,6 +204,7 @@ if submit_ou:
     if not trader_ou:
         st.error("Enter trader name.")
     else:
+        # position limit check
         delta = {m: 0 for m in CONTRACTS}
         sgn = 1 if side_ou == "Buy" else -1
         if contract_ou in delta:
@@ -253,8 +244,10 @@ with st.form("sp_form", clear_on_submit=True):
     # auto-prefill spread = (Buy ask – Sell bid)
     b_bid, b_ask = get_today_bid_ask(buy_m)
     s_bid, s_ask = get_today_bid_ask(sell_m)
-    default_spread = int(b_ask - s_bid) if (b_ask is not None and s_bid is not None) else 0
-    spread_px = s5.number_input("Spread Price (Buy–Sell)", step=1, value=default_spread, key="sp_px")
+    default_spread = None
+    if (b_ask is not None) and (s_bid is not None):
+        default_spread = b_ask - s_bid
+    spread_px = s5.number_input("Spread Price (Buy–Sell)", step=1, value=int(default_spread) if default_spread else 0, key="sp_px")
 
     submit_sp = st.form_submit_button("Submit Spread Trade")
 
@@ -265,6 +258,7 @@ if submit_sp:
         st.error("Buy and Sell month must differ.")
     else:
         delta = {m: 0 for m in CONTRACTS}
+        # long buy_m, short sell_m
         if buy_m in delta:  delta[buy_m]  += int(lots_sp)
         if sell_m in delta: delta[sell_m] -= int(lots_sp)
         viol, msg = would_violate_limits(trader_sp, selected_date, delta)
@@ -298,9 +292,11 @@ st.markdown("### 🧹 Repair Trade Log (backfill missing dates/schema)")
 if os.path.exists(LOG_FILE):
     if st.button("Repair now"):
         tl = pd.read_csv(LOG_FILE, dtype=str).fillna("")
+        missing_date = (tl.get("date", "").astype(str).str.strip() == "")
+        fixed = int(missing_date.sum()) if isinstance(missing_date, pd.Series) else 0
         if "date" not in tl.columns:
             tl["date"] = ""
-        fixed = int((tl["date"].astype(str).str.strip() == "").sum())
+            fixed = len(tl)
         tl.loc[tl["date"].astype(str).str.strip() == "", "date"] = str(selected_date)
         tl = _ensure_log_schema(tl)
         tl.to_csv(LOG_FILE, index=False)
@@ -323,6 +319,7 @@ if pwd == "freightadmintrader":
             curves_all = pd.read_csv(CURVE_FILE)
             curves_all["date"] = curves_all["date"].astype(str)
 
+            # Build P&L rows per trade (day P&L only; cumulative can be summed per trader)
             pnl_rows = []
             pending = 0
 
@@ -368,6 +365,7 @@ if pwd == "freightadmintrader":
                         pnl = None
                         mtm_next = None
                     else:
+                        # MTM spread (Buy-Sell)
                         mtm_spread_next = mtm_b - mtm_s
                         pnl = (mtm_spread_next - spx) * lots
                         mtm_next = mtm_spread_next
@@ -389,11 +387,13 @@ if pwd == "freightadmintrader":
                     })
 
             pnl_df = pd.DataFrame(pnl_rows)
+            # also provide trader-level daily & cumulative
             if not pnl_df.empty:
                 daily = pnl_df.groupby(["date", "trader"], dropna=False)["pnl_day"].sum(min_count=1).reset_index()
                 daily = daily.sort_values(["trader", "date"])
                 daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum(min_count=1)
 
+                # Package both sheets in one CSV (stacked with markers)
                 out = io.StringIO()
                 out.write("# Trades with T+1 P&L\n")
                 pnl_df.to_csv(out, index=False)
