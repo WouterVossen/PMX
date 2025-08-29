@@ -208,25 +208,36 @@ def _positions_for_trader_mtd(trader: str, upto_date_str: str):
 
 def _check_limits_after(trader: str, date_str: str, changes: dict):
     """
-    Enforce limits against the live positions sheet (same buckets for outrights & spreads).
-    changes: {month: delta_lots}  (months canonicalized)
+    Strong enforcement (Option A): block any order if any single leg would push a month over PER_MONTH_CAP.
+    Applies to both outrights and spreads. 'changes' is {month: delta_lots}.
     """
+    # Current live positions
     per_month, _ = _get_trader_positions(trader)
-    # simulate
+
+    # 1) Legwise pre-flight: immediate block if any proposed leg breaches cap
+    for m, dlt in changes.items():
+        cm = _canon_month(m)
+        if cm not in per_month:
+            return False, f"Unknown/disabled month '{m}'."
+        proposed = int(per_month[cm]) + int(dlt)
+        if abs(proposed) > PER_MONTH_CAP:
+            return False, f"Per-month limit exceeded in {cm}: |{proposed}| > {PER_MONTH_CAP}."
+
+    # 2) Apply changes and re-check defensively (covers multi-leg collisions)
     new_per_month = per_month.copy()
     for m, dlt in changes.items():
         cm = _canon_month(m)
-        if cm in new_per_month:
-            new_per_month[cm] += int(dlt)
-    new_slate = sum(new_per_month.values())
+        new_per_month[cm] += int(dlt)
 
-    # per-month cap
     for m, net in new_per_month.items():
         if abs(net) > PER_MONTH_CAP:
             return False, f"Per-month limit exceeded in {m}: |{net}| > {PER_MONTH_CAP}."
-    # slate cap
+
+    # 3) Slate cap unchanged (your slate restriction already works)
+    new_slate = sum(new_per_month.values())
     if abs(new_slate) > SLATE_CAP:
         return False, f"Slate limit exceeded: |{new_slate}| > {SLATE_CAP}."
+
     return True, "OK"
 
 def _append_log_row(row: dict):
