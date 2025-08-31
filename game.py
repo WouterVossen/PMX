@@ -53,8 +53,8 @@ st.subheader(f"📅 Market Day: {selected_date}")
 st.markdown("### 📈 Forward Curve")
 
 fig, ax = plt.subplots(figsize=(7, 3))  # compact
-mids = (curve_today["bid"] + curve_today["ask"]) / 2
-ax.plot(curve_today["contract"], mids, marker="o", label="Mid Price")
+#mids = (curve_today["bid"] + curve_today["ask"]) / 2
+#ax.plot(curve_today["contract"], mids, marker="o", label="Mid Price")
 ax.fill_between(curve_today["contract"], curve_today["bid"], curve_today["ask"], alpha=0.20, label="Bid/Ask Spread")
 
 for _, row in curve_today.iterrows():
