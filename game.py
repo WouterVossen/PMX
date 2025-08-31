@@ -89,6 +89,7 @@ def _canon_month(s: str) -> str:
 
 # ==========================
 # Positions sheet utilities (persistent per-trader buckets)
+# (kept for your audit/export; NOT used for risk checks anymore)
 # ==========================
 POS_FILE = os.path.join(DATA_DIR, "positions.csv")
 
@@ -141,6 +142,7 @@ def _get_trader_positions(trader: str):
     return per_month, slate
 
 def _apply_position_changes(trader: str, changes: dict):
+    # keep writing positions.csv for your audit; checks are log-driven below
     df = _load_positions()
     key = _norm_trader_key(trader)
     mask = df["trader_key"] == key
@@ -174,69 +176,72 @@ def _load_log_df():
 def _month_from_contract(contract_str: str) -> str:
     return _canon_month(contract_str)
 
-def _positions_for_trader_mtd(trader: str, upto_date_str: str):
-    # legacy helper (not used for limits)
-    df = _load_log_df()
+# ===== NEW: compute positions per trader from the LOG (truth) =====
+def _live_positions_from_log(trader: str, upto_date_str: str):
+    """
+    Return {Sep, Oct, Nov, Dec} net lots for TRADER using the trade log
+    up to and including upto_date_str (string compare to match your CSV date format).
+    """
+    _ensure_log_exists()
+    df = pd.read_csv(LOG_FILE)
     if df.empty:
-        return {m: 0 for m in MONTH_ORDER}, 0
-    try:
-        df["date_dt"] = pd.to_datetime(df["date"])
-        selected_dt = pd.to_datetime(upto_date_str)
-        same_month = (df["date_dt"].dt.month == selected_dt.month) & (df["date_dt"].dt.year == selected_dt.year)
-        df = df[same_month]
-    except Exception:
-        df = df[df["date"] == upto_date_str]
-    df = df[df["trader"].astype(str).str.strip().str.lower() == str(trader).strip().lower()]
-    per_month = {m: 0 for m in MONTH_ORDER}
+        return {m: 0 for m in MONTH_ORDER}
+
+    key = _norm_trader_key(trader)
+    df["trader_key"] = df["trader"].astype(str).str.strip().str.lower()
+    df = df[df["trader_key"] == key]
+
+    # Use string comparison to avoid parse issues ("9/1/2025" style)
+    df = df[df["date"].astype(str) <= str(upto_date_str)]
+
+    pos = {m: 0 for m in MONTH_ORDER}
     for _, r in df.iterrows():
-        ttype = str(r.get("type","")).lower()
-        lots = int(r.get("lots", 0))
+        ttype = str(r.get("type", "")).lower()
+        lots  = int(r.get("lots", 0))
+
         if ttype == "outright":
             m = _month_from_contract(str(r.get("contract","")))
             side = str(r.get("side","")).lower()
-            if m in per_month:
-                per_month[m] += lots if side == "buy" else -lots
-        elif ttype == "spread":
-            buy_m = _month_from_contract(str(r.get("spread_buy","")))
-            sell_m = _month_from_contract(str(r.get("spread_sell","")))
-            if buy_m in per_month:
-                per_month[buy_m] += lots
-            if sell_m in per_month:
-                per_month[sell_m] -= lots
-    slate = sum(per_month.values())
-    return per_month, slate
+            if m in pos:
+                pos[m] += lots if side == "buy" else -lots
 
+        elif ttype == "spread":
+            # We also log two outright audit legs; ignore the spread summary here
+            # to avoid double counting. The outright legs reflect the true exposure.
+            continue
+
+    return pos
+
+# ===== REPLACED: enforce caps using live log state (per trader) =====
 def _check_limits_after(trader: str, date_str: str, changes: dict):
     """
-    Strong enforcement (Option A): block any order if any single leg would push a month over PER_MONTH_CAP.
-    Applies to both outrights and spreads. 'changes' is {month: delta_lots}.
+    Enforce caps against the live state computed from the trade log up to `date_str`.
+    `changes` is a dict like {"Oct": +N, "Nov": -N} for outrights/spreads.
     """
-    # Current live positions
-    per_month, _ = _get_trader_positions(trader)
+    current = _live_positions_from_log(trader, date_str)
 
-    # 1) Legwise pre-flight: immediate block if any proposed leg breaches cap
+    # 1) Legwise pre-flight
     for m, dlt in changes.items():
         cm = _canon_month(m)
-        if cm not in per_month:
+        if cm not in current:
             return False, f"Unknown/disabled month '{m}'."
-        proposed = int(per_month[cm]) + int(dlt)
+        proposed = int(current[cm]) + int(dlt)
         if abs(proposed) > PER_MONTH_CAP:
             return False, f"Per-month limit exceeded in {cm}: |{proposed}| > {PER_MONTH_CAP}."
 
-    # 2) Apply changes and re-check defensively (covers multi-leg collisions)
-    new_per_month = per_month.copy()
+    # 2) Apply both legs together and re-check
+    new_pos = current.copy()
     for m, dlt in changes.items():
         cm = _canon_month(m)
-        new_per_month[cm] += int(dlt)
+        new_pos[cm] = int(new_pos[cm]) + int(dlt)
 
-    for m, net in new_per_month.items():
+    for m, net in new_pos.items():
         if abs(net) > PER_MONTH_CAP:
             return False, f"Per-month limit exceeded in {m}: |{net}| > {PER_MONTH_CAP}."
 
-    # 3) Slate cap unchanged (your slate restriction already works)
-    new_slate = sum(new_per_month.values())
-    if abs(new_slate) > SLATE_CAP:
-        return False, f"Slate limit exceeded: |{new_slate}| > {SLATE_CAP}."
+    slate = sum(new_pos.values())
+    if abs(slate) > SLATE_CAP:
+        return False, f"Slate limit exceeded: |{slate}| > {SLATE_CAP}."
 
     return True, "OK"
 
@@ -286,13 +291,14 @@ if ou_submit:
                     "type": "outright",
                     "contract": cm,
                     "side": ou_side,
-                    "price": ou_price,
+                    "price": float(ou_price),
                     "lots": int(ou_lots),
                     "spread_buy": "",
                     "spread_sell": "",
                     "spread_price": ""
                 })
                 st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(ou_price)}")
+                # Keep positions.csv in sync for your offline audit (not used for risk)
                 _apply_position_changes(ou_trader, { cm: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots)) })
 
 st.markdown("---")
@@ -324,7 +330,7 @@ if sp_submit:
     elif not sp_trader.strip():
         st.error("Please enter your Trader Name for the spread.")
     else:
-        # HARD LIMIT ENFORCEMENT: same buckets as outrights
+        # Enforce caps using live log state (per trader)
         delta = { sp_buy: int(sp_lots), sp_sell: -int(sp_lots) }
         ok, msg = _check_limits_after(sp_trader, selected_date, delta)
         if not ok:
@@ -342,7 +348,7 @@ if sp_submit:
                 "lots": int(sp_lots),
                 "spread_buy": sp_buy,
                 "spread_sell": sp_sell,
-                "spread_price": sp_price
+                "spread_price": float(sp_price)
             })
             # Log outright legs (audit only)
             _append_log_row({
@@ -374,7 +380,7 @@ if sp_submit:
             st.success(
                 f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}"
             )
-            # Apply net effect to the same live buckets
+            # Keep positions.csv in sync for your audit (not used for risk)
             _apply_position_changes(sp_trader, { sp_buy:  int(sp_lots), sp_sell: -int(sp_lots) })
 
 st.markdown("---")
