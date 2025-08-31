@@ -53,7 +53,7 @@ st.subheader(f"📅 Market Day: {selected_date}")
 st.markdown("### 📈 Forward Curve")
 
 fig, ax = plt.subplots(figsize=(7, 3))  # compact
-#mids = (curve_today["bid"] + curve_today["ask"]) / 2
+mids = (curve_today["bid"] + curve_today["ask"]) / 2
 #ax.plot(curve_today["contract"], mids, marker="o", label="Mid Price")
 ax.fill_between(curve_today["contract"], curve_today["bid"], curve_today["ask"], alpha=0.20, label="Bid/Ask Spread")
 
@@ -273,7 +273,7 @@ with st.form("sp_form"):
 
     # Auto-fill spread: buy at ask, sell at bid => spread = ask(buy) - bid(sell)
     default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
-    sp_price = s4.number_input("Spread Price (Buy–Sell)", value=default_spread, step=1.0, key="sp_price")
+    sp_price = s4.number_input("Spread Price (auto-filled)", value=default_spread, step=1.0, key="sp_price")
 
     sp_trader = st.text_input("Trader Name", key="sp_trader")
     sp_submit = st.form_submit_button("Submit Spread Trade")
