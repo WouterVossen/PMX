@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 import json
-from io import BytesIO, StringIO  # <-- for P&L export
+from io import BytesIO, StringIO
 
 # --------------------------
 # Page setup
@@ -12,22 +12,22 @@ from io import BytesIO, StringIO  # <-- for P&L export
 st.set_page_config(page_title="Panamax Freight Game", layout="wide")
 
 # --------------------------
-# Absolute data paths (prevents day-to-day resets from CWD changes)
+# Absolute data paths
 # --------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# File constants
 CURVE_FILE = os.path.join(DATA_DIR, "forward_curves.csv")
 LOG_FILE   = os.path.join(DATA_DIR, "trader_log.csv")
+POS_FILE   = os.path.join(DATA_DIR, "positions.csv")
 
 # --------------------------
 # Load config (current trading day)
 # --------------------------
 with open(os.path.join(BASE_DIR, "config.json"), "r") as f:
     config = json.load(f)
-selected_date = config.get("current_day")  # e.g., "9/1/2025" to match CSV format
+selected_date = config.get("current_day")  # e.g. "9/1/2025"
 
 # --------------------------
 # Load forward curve (for the selected day only)
@@ -52,7 +52,7 @@ asks = dict(zip(curve_today["contract"], curve_today["ask"]))
 st.subheader(f"📅 Market Day: {selected_date}")
 st.markdown("### 📈 Forward Curve")
 
-fig, ax = plt.subplots(figsize=(7, 3))  # smaller visual
+fig, ax = plt.subplots(figsize=(7, 3))  # compact
 mids = (curve_today["bid"] + curve_today["ask"]) / 2
 ax.plot(curve_today["contract"], mids, marker="o", label="Mid Price")
 ax.fill_between(curve_today["contract"], curve_today["bid"], curve_today["ask"], alpha=0.20, label="Bid/Ask Spread")
@@ -77,9 +77,8 @@ SLATE_CAP     = 100   # |sum of net across months|
 
 # Canonical month set (UI + CSV must map here)
 MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]
+_CANON_MAP = {"sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
 
-# Canonicalizer to ensure spreads and outrights land in the SAME bucket
-_CANON_MAP = {"sep":"Sep","oct":"Oct","nov":"Nov","dec":"Dec"}
 def _canon_month(s: str) -> str:
     if s is None:
         return ""
@@ -88,18 +87,25 @@ def _canon_month(s: str) -> str:
         return ""
     if t in MONTH_ORDER:
         return t
-    key = t[:3].lower()
-    return _CANON_MAP.get(key, t)
-
-# ==========================
-# Positions sheet utilities (persistent per-trader buckets)
-# (kept for your audit/export; NOT used for risk checks anymore)
-# ==========================
-POS_FILE = os.path.join(DATA_DIR, "positions.csv")
+    return _CANON_MAP.get(t[:3].lower(), t)
 
 def _norm_trader_key(trader: str) -> str:
     return str(trader).strip().lower()
 
+def _ensure_log_exists():
+    cols = [
+        "timestamp","date","trader","type",
+        "contract","side","price","lots",
+        "spread_buy","spread_sell","spread_price"
+    ]
+    if not os.path.exists(LOG_FILE):
+        pd.DataFrame(columns=cols).to_csv(LOG_FILE, index=False)
+
+def _load_log_df():
+    _ensure_log_exists()
+    return pd.read_csv(LOG_FILE)
+
+# ---- positions.csv maintained only for your audit; not used for checks
 def _ensure_positions_exists():
     cols = ["trader", "trader_key"] + MONTH_ORDER + ["slate"]
     if not os.path.exists(POS_FILE):
@@ -129,24 +135,7 @@ def _save_positions(df: pd.DataFrame):
         df["slate"] = df[MONTH_ORDER].sum(axis=1).astype(int)
     df.to_csv(POS_FILE, index=False)
 
-def _get_trader_positions(trader: str):
-    df = _load_positions()
-    key = _norm_trader_key(trader)
-    mask = df["trader_key"] == key
-    if not mask.any():
-        new = {"trader": trader, "trader_key": key}
-        new.update({m: 0 for m in MONTH_ORDER})
-        new["slate"] = 0
-        df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
-        _save_positions(df)
-        return {m: 0 for m in MONTH_ORDER}, 0
-    row = df[mask].iloc[0]
-    per_month = {m: int(row[m]) for m in MONTH_ORDER}
-    slate = int(row.get("slate", sum(per_month.values())))
-    return per_month, slate
-
 def _apply_position_changes(trader: str, changes: dict):
-    # keep writing positions.csv for your audit; checks are log-driven below
     df = _load_positions()
     key = _norm_trader_key(trader)
     mask = df["trader_key"] == key
@@ -163,67 +152,35 @@ def _apply_position_changes(trader: str, changes: dict):
             df.at[idx, cm] = int(df.at[idx, cm]) + int(d)
     _save_positions(df)
 
-def _ensure_log_exists():
-    cols = [
-        "timestamp","date","trader","type",
-        "contract","side","price","lots",
-        "spread_buy","spread_sell","spread_price"
-    ]
-    if not os.path.exists(LOG_FILE):
-        pd.DataFrame(columns=cols).to_csv(LOG_FILE, index=False)
-
-def _load_log_df():
-    _ensure_log_exists()
-    df = pd.read_csv(LOG_FILE)
-    return df
-
-def _month_from_contract(contract_str: str) -> str:
-    return _canon_month(contract_str)
-
-# ===== NEW: compute positions per trader from the LOG (truth) =====
+# ===== LIVE positions from LOG (truth) =====
 def _live_positions_from_log(trader: str, upto_date_str: str):
-    """
-    Return {Sep, Oct, Nov, Dec} net lots for TRADER using the trade log
-    up to and including upto_date_str (string compare to match your CSV date format).
-    """
     _ensure_log_exists()
     df = pd.read_csv(LOG_FILE)
     if df.empty:
         return {m: 0 for m in MONTH_ORDER}
-
     key = _norm_trader_key(trader)
     df["trader_key"] = df["trader"].astype(str).str.strip().str.lower()
     df = df[df["trader_key"] == key]
-
-    # Use string comparison to avoid parse issues ("9/1/2025" style)
-    df = df[df["date"].astype(str) <= str(upto_date_str)]
-
+    df = df[df["date"].astype(str) <= str(upto_date_str)]  # string compare to match CSV format
     pos = {m: 0 for m in MONTH_ORDER}
     for _, r in df.iterrows():
         ttype = str(r.get("type", "")).lower()
-        lots  = int(r.get("lots", 0))
-
+        lots  = int(pd.to_numeric(r.get("lots", 0), errors="coerce"))
         if ttype == "outright":
-            m = _month_from_contract(str(r.get("contract","")))
-            side = str(r.get("side","")).lower()
+            m = _canon_month(r.get("contract", ""))
+            side = str(r.get("side", "")).lower()
             if m in pos:
                 pos[m] += lots if side == "buy" else -lots
-
         elif ttype == "spread":
-            # Ignore spread summary (we log legs separately)
+            # Ignore spread summary row; we also log outright legs and those carry exposure.
             continue
-
     return pos
 
-# ===== REPLACED: enforce caps using live log state (per trader) =====
+# ===== Risk checks using LOG state =====
 def _check_limits_after(trader: str, date_str: str, changes: dict):
-    """
-    Enforce caps against the live state computed from the trade log up to `date_str`.
-    `changes` is a dict like {"Oct": +N, "Nov": -N} for outrights/spreads.
-    """
     current = _live_positions_from_log(trader, date_str)
 
-    # 1) Legwise pre-flight
+    # legwise
     for m, dlt in changes.items():
         cm = _canon_month(m)
         if cm not in current:
@@ -232,7 +189,7 @@ def _check_limits_after(trader: str, date_str: str, changes: dict):
         if abs(proposed) > PER_MONTH_CAP:
             return False, f"Per-month limit exceeded in {cm}: |{proposed}| > {PER_MONTH_CAP}."
 
-    # 2) Apply both legs together and re-check
+    # both legs together
     new_pos = current.copy()
     for m, dlt in changes.items():
         cm = _canon_month(m)
@@ -245,15 +202,146 @@ def _check_limits_after(trader: str, date_str: str, changes: dict):
     slate = sum(new_pos.values())
     if abs(slate) > SLATE_CAP:
         return False, f"Slate limit exceeded: |{slate}| > {SLATE_CAP}."
-
     return True, "OK"
 
 def _append_log_row(row: dict):
     df = pd.DataFrame([row])
-    df.to_csv(LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0, index=False)
+    header_needed = not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0
+    df.to_csv(LOG_FILE, mode="a", header=header_needed, index=False)
 
 # ==========================
-# T+1 P&L (Bid/Ask execution marks) — EXCEL/CSV package
+# Trade entry
+# ==========================
+
+st.markdown("### 🧾 Submit Your Trades")
+
+# ---------- OUTRIGHT ----------
+st.markdown("**Outright**")
+with st.form("ou_form"):
+    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
+
+    ou_contract = c1.selectbox("Contract", options=contracts_today, key="ou_contract")
+    ou_side     = c2.selectbox("Side", ["Buy", "Sell"], key="ou_side")
+    ou_lots     = c3.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
+
+    # Auto-fill: Buy at ask, Sell at bid
+    default_ou_price = float(asks[ou_contract]) if ou_side == "Buy" else float(bids[ou_contract])
+    ou_price = c4.number_input("Price (auto-filled)", value=default_ou_price, step=1.0, key="ou_price")
+
+    ou_trader = st.text_input("Trader Name", key="ou_trader")
+    ou_submit = st.form_submit_button("Submit Outright Trade")
+
+if ou_submit:
+    if not ou_trader.strip():
+        st.error("Please enter your Trader Name for the outright trade.")
+    else:
+        cm = _canon_month(ou_contract)
+        if cm not in MONTH_ORDER:
+            st.error(f"Unknown month/contract '{ou_contract}'.")
+        else:
+            delta = {cm: (ou_lots if ou_side == "Buy" else -ou_lots)}
+            ok, msg = _check_limits_after(ou_trader, selected_date, delta)
+            if not ok:
+                st.error(f"❌ {msg}")
+            else:
+                _append_log_row({
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "date": selected_date,
+                    "trader": ou_trader,
+                    "type": "outright",
+                    "contract": cm,
+                    "side": ou_side,
+                    "price": float(ou_price),
+                    "lots": int(ou_lots),
+                    "spread_buy": "",
+                    "spread_sell": "",
+                    "spread_price": ""
+                })
+                st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(ou_price)}")
+                _apply_position_changes(ou_trader, {cm: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots))})
+
+st.markdown("---")
+
+# ---------- SPREAD ----------
+st.markdown("**Calendar Spread (Buy one month / Sell another)**")
+with st.form("sp_form"):
+    s1, s2, s3, s4 = st.columns([1.2, 1.2, 1, 1.2])
+
+    sp_buy_raw  = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
+    sp_sell_raw = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy_raw], key="sp_sell")
+    sp_lots     = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
+
+    # Auto-fill spread: buy at ask, sell at bid => spread = ask(buy) - bid(sell)
+    default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
+    sp_price = s4.number_input("Spread Price (Buy–Sell)", value=default_spread, step=1.0, key="sp_price")
+
+    sp_trader = st.text_input("Trader Name", key="sp_trader")
+    sp_submit = st.form_submit_button("Submit Spread Trade")
+
+if sp_submit:
+    sp_buy  = _canon_month(sp_buy_raw)
+    sp_sell = _canon_month(sp_sell_raw)
+
+    if sp_buy == sp_sell:
+        st.error("Choose two different months for a spread.")
+    elif sp_buy not in MONTH_ORDER or sp_sell not in MONTH_ORDER:
+        st.error(f"Unknown months in spread: BUY '{sp_buy_raw}' / SELL '{sp_sell_raw}'.")
+    elif not sp_trader.strip():
+        st.error("Please enter your Trader Name for the spread.")
+    else:
+        delta = {sp_buy: int(sp_lots), sp_sell: -int(sp_lots)}
+        ok, msg = _check_limits_after(sp_trader, selected_date, delta)
+        if not ok:
+            st.error(f"❌ {msg}")
+        else:
+            # Summary spread row
+            _append_log_row({
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "date": selected_date,
+                "trader": sp_trader,
+                "type": "spread",
+                "contract": "",
+                "side": "",
+                "price": "",
+                "lots": int(sp_lots),
+                "spread_buy": sp_buy,
+                "spread_sell": sp_sell,
+                "spread_price": float(sp_price)
+            })
+            # Outright audit legs (executable marks used)
+            _append_log_row({
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "date": selected_date,
+                "trader": sp_trader,
+                "type": "outright",
+                "contract": sp_buy,
+                "side": "Buy",
+                "price": float(asks[sp_buy_raw]),
+                "lots": int(sp_lots),
+                "spread_buy": "",
+                "spread_sell": "",
+                "spread_price": ""
+            })
+            _append_log_row({
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "date": selected_date,
+                "trader": sp_trader,
+                "type": "outright",
+                "contract": sp_sell,
+                "side": "Sell",
+                "price": float(bids[sp_sell_raw]),
+                "lots": int(sp_lots),
+                "spread_buy": "",
+                "spread_sell": "",
+                "spread_price": ""
+            })
+            st.success(f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}")
+            _apply_position_changes(sp_trader, {sp_buy: int(sp_lots), sp_sell: -int(sp_lots)})
+
+st.markdown("---")
+
+# ==========================
+# P&L computation (on demand in Admin section)
 # ==========================
 def _pnl_compute_and_package():
     """Compute T+1 P&L using executable marks (Bid/Ask), not mids.
@@ -266,13 +354,13 @@ def _pnl_compute_and_package():
     if tl.empty:
         return None, "No trades logged yet.", 0
 
-    # Ensure numeric types
+    # numeric types
     for c in ["price", "lots", "spread_price"]:
         if c not in tl.columns:
             tl[c] = 0
         tl[c] = pd.to_numeric(tl[c], errors="coerce").fillna(0.0)
 
-    # Load curves and prep next-day lookup
+    # load curves + prep next-day lookup
     curves = pd.read_csv(CURVE_FILE).copy()
     curves["date"] = curves["date"].astype(str)
     curves["bid"]  = pd.to_numeric(curves["bid"], errors="coerce")
@@ -281,7 +369,6 @@ def _pnl_compute_and_package():
     unique_dates = sorted(curves["_dt"].dropna().unique())
 
     def _next_day_row(contract, date_str):
-        """Return the curve row (with bid/ask) for the day AFTER date_str for this contract."""
         try:
             d0 = pd.to_datetime(date_str, errors="coerce", infer_datetime_format=True)
         except Exception:
@@ -290,10 +377,9 @@ def _pnl_compute_and_package():
         if not later:
             return None
         d1 = later[0]
-        # Primary: match by datetime
         sub = curves[(curves["_dt"] == d1) & (curves["contract"] == contract)]
         if sub.empty:
-            # Fallback: match by the original string (handles odd formats)
+            # Fallback: try formatted string matching
             ds = (pd.Timestamp(d1).strftime("%-m/%-d/%Y")
                   if os.name != "nt" else pd.Timestamp(d1).strftime("%#m/%#d/%Y"))
             sub = curves[(curves["date"] == ds) & (curves["contract"] == contract)]
@@ -302,10 +388,6 @@ def _pnl_compute_and_package():
         return sub.iloc[0]
 
     def _ou_close_px(contract, trade_side, date_str):
-        """Executable close for outrights:
-           - long (buy): next-day Bid
-           - short (sell): next-day Ask
-        """
         row = _next_day_row(contract, date_str)
         if row is None or pd.isna(row["bid"]) or pd.isna(row["ask"]):
             return None, None
@@ -315,16 +397,15 @@ def _pnl_compute_and_package():
             return float(row["ask"]), "Ask"
 
     def _sp_close_spread(buy_m, sell_m, date_str):
-        """Executable close for Buy A / Sell B spread => next-day Bid(A) - Ask(B)."""
         a = _next_day_row(buy_m, date_str)
         b = _next_day_row(sell_m, date_str)
         if a is None or b is None or pd.isna(a["bid"]) or pd.isna(b["ask"]):
             return None
         return float(a["bid"]) - float(b["ask"])
 
-    # Identify and drop spread audit legs (so we don’t double-count)
-    tl["timestamp"] = tl["timestamp"].astype(str)
-    tl["date"] = tl["date"].astype(str)
+    # mark spread audit legs so they don't double count
+    tl["timestamp"]  = tl["timestamp"].astype(str)
+    tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
     df = tl.copy()
     df["_ts"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True)
@@ -381,9 +462,9 @@ def _pnl_compute_and_package():
             pnl = None
         else:
             if side == "buy":
-                pnl = (close_px - trade_px) * lots     # long marked to next-day Bid
+                pnl = (close_px - trade_px) * lots  # long marked to next-day Bid
             else:
-                pnl = (trade_px - close_px) * lots     # short marked to next-day Ask
+                pnl = (trade_px - close_px) * lots  # short marked to next-day Ask
 
         rows.append({
             "timestamp": r["timestamp"],
@@ -404,14 +485,14 @@ def _pnl_compute_and_package():
         buy_m = _canon_month(r.get("spread_buy", ""))
         sell_m = _canon_month(r.get("spread_sell", ""))
         lots = int(pd.to_numeric(r.get("lots", 0), errors="coerce"))
-        spx = float(pd.to_numeric(r.get("spread_price", 0), errors="coerce"))
+        spx  = float(pd.to_numeric(r.get("spread_price", 0), errors="coerce"))
 
         close_spread = _sp_close_spread(buy_m, sell_m, r["date"])
         if close_spread is None:
             pending += 1
             pnl = None
         else:
-            pnl = (close_spread - spx) * lots  # long spread MTM: [Bid(A) - Ask(B)] - traded_spread
+            pnl = (close_spread - spx) * lots  # long spread MTM
 
         rows.append({
             "timestamp": r["timestamp"],
@@ -428,15 +509,22 @@ def _pnl_compute_and_package():
 
     trades_pnl = pd.DataFrame(rows)
 
-    # Daily per trader and cumulative
-    daily = trades_pnl.groupby(["date", "trader"], dropna=False)["pnl_day"].sum(min_count=1).reset_index()
-    daily = daily.sort_values(["trader", "date"])
-    daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum(min_count=1)
+    # ----- Daily per trader and cumulative (robust for older pandas) -----
+    daily = trades_pnl.copy()
+    daily["pnl_day"] = pd.to_numeric(daily["pnl_day"], errors="coerce")
+
+    daily = daily.groupby(["date", "trader"], as_index=False)["pnl_day"].sum()
+    daily["date_dt"] = pd.to_datetime(daily["date"], errors="coerce", infer_datetime_format=True)
+    daily = daily.sort_values(["trader", "date_dt"]).drop(columns=["date_dt"])
+
+    daily["pnl_day"] = daily["pnl_day"].fillna(0.0)
+    daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum()
 
     # Try Excel first, fallback to CSV
     xlsx_bytes = None
+    csv_text = None
     try:
-        import xlsxwriter
+        import xlsxwriter  # noqa: F401
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
             trades_pnl.to_excel(xw, index=False, sheet_name="Trades_T+1_PnL")
@@ -447,7 +535,6 @@ def _pnl_compute_and_package():
             ).sort_values("total_pnl", ascending=False).reset_index()
             summary.to_excel(xw, index=False, sheet_name="Summary")
         xlsx_bytes = bio.getvalue()
-        csv_text = None
     except Exception:
         sio = StringIO()
         sio.write("# Trades_T+1_PnL\n")
@@ -456,160 +543,34 @@ def _pnl_compute_and_package():
         daily.to_csv(sio, index=False)
         csv_text = sio.getvalue()
 
-    return xlsx_bytes, (csv_text if xlsx_bytes is None else None), pending
-
-# ==========================
-# Trade entry
-# ==========================
-
-st.markdown("### 🧾 Submit Your Trades")
-
-# ---------- OUTRIGHT ----------
-st.markdown("**Outright**")
-with st.form("ou_form"):
-    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
-
-    ou_contract = c1.selectbox("Contract", options=contracts_today, key="ou_contract")
-    ou_side = c2.selectbox("Side", ["Buy", "Sell"], key="ou_side")
-    ou_lots = c3.number_input("Lots (days)", min_value=1, step=1, value=1, key="ou_lots")
-
-    # Auto-fill price: Buy at ask, Sell at bid
-    default_ou_price = float(asks[ou_contract]) if ou_side == "Buy" else float(bids[ou_contract])
-    ou_price = c4.number_input("Price (auto-filled)", value=default_ou_price, step=1.0, key="ou_price")
-
-    ou_trader = st.text_input("Trader Name", key="ou_trader")
-    ou_submit = st.form_submit_button("Submit Outright Trade")
-
-if ou_submit:
-    if not ou_trader.strip():
-        st.error("Please enter your Trader Name for the outright trade.")
-    else:
-        cm = _month_from_contract(ou_contract)
-        if cm not in MONTH_ORDER:
-            st.error(f"Unknown month/contract '{ou_contract}'.")
-        else:
-            delta = { cm: (ou_lots if ou_side == "Buy" else -ou_lots) }
-            ok, msg = _check_limits_after(ou_trader, selected_date, delta)
-            if not ok:
-                st.error(f"❌ {msg}")
-            else:
-                _append_log_row({
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "date": selected_date,
-                    "trader": ou_trader,
-                    "type": "outright",
-                    "contract": cm,
-                    "side": ou_side,
-                    "price": float(ou_price),
-                    "lots": int(ou_lots),
-                    "spread_buy": "",
-                    "spread_sell": "",
-                    "spread_price": ""
-                })
-                st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(ou_price)}")
-                # Keep positions.csv in sync for your offline audit (not used for risk)
-                _apply_position_changes(ou_trader, { cm: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots)) })
-
-st.markdown("---")
-
-# ---------- SPREAD ----------
-st.markdown("**Calendar Spread (Buy one month / Sell another)**")
-with st.form("sp_form"):
-    s1, s2, s3, s4 = st.columns([1.2, 1.2, 1, 1.2])
-
-    sp_buy_raw = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
-    sp_sell_raw = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy_raw], key="sp_sell")
-    sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
-
-    # Auto-fill spread price: buy at ask, sell at bid => spread = buy_ask - sell_bid
-    default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
-    sp_price = s4.number_input("Spread Price (Buy–Sell)", value=default_spread, step=1.0, key="sp_price")
-
-    sp_trader = st.text_input("Trader Name", key="sp_trader")
-    sp_submit = st.form_submit_button("Submit Spread Trade")
-
-if sp_submit:
-    sp_buy = _month_from_contract(sp_buy_raw)
-    sp_sell = _month_from_contract(sp_sell_raw)
-
-    if sp_buy == sp_sell:
-        st.error("Choose two different months for a spread.")
-    elif sp_buy not in MONTH_ORDER or sp_sell not in MONTH_ORDER:
-        st.error(f"Unknown months in spread: BUY '{sp_buy_raw}' / SELL '{sp_sell_raw}'.")
-    elif not sp_trader.strip():
-        st.error("Please enter your Trader Name for the spread.")
-    else:
-        # Enforce caps using live log state (per trader)
-        delta = { sp_buy: int(sp_lots), sp_sell: -int(sp_lots) }
-        ok, msg = _check_limits_after(sp_trader, selected_date, delta)
-        if not ok:
-            st.error(f"❌ {msg}")
-        else:
-            # Log spread summary row (canonical months)
-            _append_log_row({
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "date": selected_date,
-                "trader": sp_trader,
-                "type": "spread",
-                "contract": "",
-                "side": "",
-                "price": "",
-                "lots": int(sp_lots),
-                "spread_buy": sp_buy,
-                "spread_sell": sp_sell,
-                "spread_price": float(sp_price)
-            })
-            # Log outright legs (audit only)
-            _append_log_row({
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "date": selected_date,
-                "trader": sp_trader,
-                "type": "outright",
-                "contract": sp_buy,
-                "side": "Buy",
-                "price": float(asks[sp_buy_raw]),
-                "lots": int(sp_lots),
-                "spread_buy": "",
-                "spread_sell": "",
-                "spread_price": ""
-            })
-            _append_log_row({
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "date": selected_date,
-                "trader": sp_trader,
-                "type": "outright",
-                "contract": sp_sell,
-                "side": "Sell",
-                "price": float(bids[sp_sell_raw]),
-                "lots": int(sp_lots),
-                "spread_buy": "",
-                "spread_sell": "",
-                "spread_price": ""
-            })
-            st.success(
-                f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}"
-            )
-            # Keep positions.csv in sync for your audit (not used for risk)
-            _apply_position_changes(sp_trader, { sp_buy:  int(sp_lots), sp_sell: -int(sp_lots) })
-
-st.markdown("---")
+    return xlsx_bytes, csv_text, pending
 
 # ---------- Admin download ----------
 st.markdown("🔐 **Admin Access**")
-password = st.text_input("Enter admin password to download trade log", type="password")
+password = st.text_input("Enter admin password to download trade log & P&L", type="password")
 if password == "freightadmintrader":
+    # Trade log
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "rb") as f:
-            st.download_button("📥 Download Trade Log", f, file_name="trader_log.csv")
+            st.download_button("📥 Download Trade Log (CSV)", f, file_name="trader_log.csv")
 
-        # Build P&L package on demand
-        xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
-        if xlsx_bytes:
-            st.download_button("📊 Download P&L (Excel)", data=xlsx_bytes, file_name="pnl_T+1.xlsx")
-        elif csv_text:
-            st.download_button("📊 Download P&L (CSV bundle)", data=csv_text, file_name="pnl_T+1.csv")
-
-        if pending > 0:
-            st.info(f"⚠️ {pending} trade(s) have no next-day curve yet (P&L pending). Upload the next day’s forward_curves to finalize those rows.")
-    else:
-        st.info("No trades logged yet.")
+    # P&L pack (computed on demand)
+    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
+    if xlsx_bytes:
+        st.download_button(
+            "📊 Download P&L Pack (Excel)",
+            data=xlsx_bytes,
+            file_name="pnl_pack.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    elif csv_text:
+        st.download_button(
+            "📊 Download P&L Pack (CSV bundle)",
+            data=csv_text.encode("utf-8"),
+            file_name="pnl_pack.csv",
+            mime="text/csv",
+        )
+    if pending:
+        st.warning(f"Some trades have no next-day curve yet (P&L pending): {pending} row(s). Upload the next day’s forward_curves to finalize.")
+else:
+    st.caption("Enter the admin password to enable downloads.")
