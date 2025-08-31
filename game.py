@@ -547,7 +547,7 @@ def _pnl_compute_and_package():
 
 # ---------- Admin download ----------
 st.markdown("🔐 **Admin Access**")
-password = st.text_input("Enter admin password to download trade log & P&L", type="password")
+password = st.text_input("Enter admin password to download trade log", type="password")
 if password == "freightadmintrader":
     # Trade log
     if os.path.exists(LOG_FILE):
