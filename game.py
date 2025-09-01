@@ -226,7 +226,7 @@ with st.form("ou_form"):
 
     # Auto-fill: Buy at ask, Sell at bid
     default_ou_price = float(asks[ou_contract]) if ou_side == "Buy" else float(bids[ou_contract])
-    ou_price = c4.number_input("Price (auto-filled)", value=default_ou_price, step=1.0, key="ou_price")
+    ou_price = c4.number_input("Price (auto-filled when you press submit)", value=default_ou_price, step=1.0, key="ou_price")
 
     ou_trader = st.text_input("Trader Name", key="ou_trader")
     ou_submit = st.form_submit_button("Submit Outright Trade")
@@ -273,7 +273,7 @@ with st.form("sp_form"):
 
     # Auto-fill spread: buy at ask, sell at bid => spread = ask(buy) - bid(sell)
     default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
-    sp_price = s4.number_input("Spread Price (auto-filled)", value=default_spread, step=1.0, key="sp_price")
+    sp_price = s4.number_input("Spread Price (auto-filled when you press submit)", value=default_spread, step=1.0, key="sp_price")
 
     sp_trader = st.text_input("Trader Name", key="sp_trader")
     sp_submit = st.form_submit_button("Submit Spread Trade")
