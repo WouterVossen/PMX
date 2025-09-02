@@ -78,3 +78,23 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/1/2025 10:53,9/1/2025,Carlos1,spread,,,,40,Nov,Sep,-650
 9/1/2025 10:53,9/1/2025,Carlos1,outright,Nov,Buy,14050,40,,,
 9/1/2025 10:53,9/1/2025,Carlos1,outright,Sep,Sell,14700,40,,,
+9/2/2025 7:48,9/1/2025,kk,outright,Sep,Buy,14800,1,,,
+9/2/2025 10:47,9/2/2025,CLT,spread,,,,50,Dec,Sep,-1600
+9/2/2025 10:47,9/2/2025,CLT,outright,Dec,Buy,12550,50,,,
+9/2/2025 10:47,9/2/2025,CLT,outright,Sep,Sell,14150,50,,,
+9/2/2025 10:49,9/2/2025,CLT,spread,,,,50,Dec,Oct,-1500
+9/2/2025 10:49,9/2/2025,CLT,outright,Dec,Buy,12550,50,,,
+9/2/2025 10:49,9/2/2025,CLT,outright,Oct,Sell,14050,50,,,
+9/2/2025 10:50,9/2/2025,Erica,outright,Sep,Sell,14150,30,,,
+9/2/2025 11:02,9/2/2025,elisa,outright,Sep,Sell,14150,20,,,
+9/2/2025 11:02,9/2/2025,elisa,outright,Oct,Sell,14050,10,,,
+9/2/2025 11:06,9/2/2025,Bart,outright,Sep,Buy,14250,100,,,
+9/2/2025 11:09,9/2/2025,GRO,outright,Sep,Sell,14150,25,,,
+9/2/2025 11:10,9/2/2025,Danish Suhaimi,outright,Oct,Sell,14050,25,,,
+9/2/2025 11:11,9/2/2025,Danish Suhaimi,outright,Oct,Sell,14150,5,,,
+9/2/2025 11:11,9/2/2025,GRO,outright,Oct,Sell,14050,25,,,
+9/2/2025 11:11,9/2/2025,GRO,outright,Oct,Sell,14050,25,,,
+9/2/2025 11:11,9/2/2025,GRO,outright,Oct,Sell,14050,25,,,
+9/2/2025 11:13,9/2/2025,Carlos1,outright,Sep,Sell,14150,25,,,
+9/2/2025 11:13,9/2/2025,Carlos1,outright,Oct,Sell,14050,25,,,
+9/2/2025 11:24,9/2/2025,GRO,outright,Oct,Buy,14150,50,,,
