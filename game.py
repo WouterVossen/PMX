@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import json
 from io import BytesIO, StringIO
+import shutil  # for copying morning template into live log
 
 # --------------------------
 # Page setup
@@ -21,6 +22,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 CURVE_FILE = os.path.join(DATA_DIR, "forward_curves.csv")
 LOG_FILE   = os.path.join(DATA_DIR, "trader_log.csv")
 POS_FILE   = os.path.join(DATA_DIR, "positions.csv")
+TEMPLATE_FILE = os.path.join(DATA_DIR, "trader_log_template.csv")  # upload this each morning
 
 # --------------------------
 # Load config (current trading day)
@@ -36,6 +38,28 @@ curve_df = pd.read_csv(CURVE_FILE)
 curve_today = curve_df[curve_df["date"] == selected_date].copy()
 
 st.title("🚢 Panamax Freight Paper Trading Game")
+
+# ---- Boot-time risk guard: require a non-empty trade log (or template) before trading ----
+def _ensure_log_exists():
+    """
+    Ensure the live LOG_FILE exists and has data.
+    - If LOG_FILE is missing/empty but TEMPLATE_FILE exists, copy template into place.
+    - Otherwise do nothing; a boot guard will stop the app if still missing.
+    """
+    if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 0:
+        return
+    if os.path.exists(TEMPLATE_FILE) and os.path.getsize(TEMPLATE_FILE) > 0:
+        shutil.copy(TEMPLATE_FILE, LOG_FILE)
+        return
+    # do not create an empty log here; trading will be blocked until restored
+
+_ensure_log_exists()
+if (not os.path.exists(LOG_FILE)) or (os.path.getsize(LOG_FILE) == 0):
+    st.error(
+        "❌ No trade log found. Upload your morning master 'trader_log_template.csv' into /data "
+        "or restore it via Admin before trading. Limits cannot be enforced without the log."
+    )
+    st.stop()
 
 if curve_today.empty:
     st.error(f"No market data found for {selected_date}. Please check your config or data files.")
@@ -92,17 +116,8 @@ def _canon_month(s: str) -> str:
 def _norm_trader_key(trader: str) -> str:
     return str(trader).strip().lower()
 
-def _ensure_log_exists():
-    cols = [
-        "timestamp","date","trader","type",
-        "contract","side","price","lots",
-        "spread_buy","spread_sell","spread_price"
-    ]
-    if not os.path.exists(LOG_FILE):
-        pd.DataFrame(columns=cols).to_csv(LOG_FILE, index=False)
-
 def _load_log_df():
-    _ensure_log_exists()
+    # Log should exist due to boot guard; just read it.
     return pd.read_csv(LOG_FILE)
 
 # ---- positions.csv maintained only for your audit; not used for checks
@@ -136,6 +151,7 @@ def _save_positions(df: pd.DataFrame):
     df.to_csv(POS_FILE, index=False)
 
 def _apply_position_changes(trader: str, changes: dict):
+    # purely audit; LOG is source of truth for risk checks
     df = _load_positions()
     key = _norm_trader_key(trader)
     mask = df["trader_key"] == key
@@ -154,8 +170,7 @@ def _apply_position_changes(trader: str, changes: dict):
 
 # ===== LIVE positions from LOG (truth) =====
 def _live_positions_from_log(trader: str, upto_date_str: str):
-    _ensure_log_exists()
-    df = pd.read_csv(LOG_FILE)
+    df = _load_log_df()
     if df.empty:
         return {m: 0 for m in MONTH_ORDER}
     key = _norm_trader_key(trader)
@@ -172,7 +187,7 @@ def _live_positions_from_log(trader: str, upto_date_str: str):
             if m in pos:
                 pos[m] += lots if side == "buy" else -lots
         elif ttype == "spread":
-            # Ignore spread summary row; we also log outright legs and those carry exposure.
+            # Ignore spread summary row; outright legs carry exposure.
             continue
     return pos
 
@@ -208,6 +223,27 @@ def _append_log_row(row: dict):
     df = pd.DataFrame([row])
     header_needed = not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0
     df.to_csv(LOG_FILE, mode="a", header=header_needed, index=False)
+
+# --------------------------
+# Live positions table (sanity)
+# --------------------------
+st.markdown("### 📊 Current Live Positions (as of selected day)")
+try:
+    live_df = _load_log_df()
+    if live_df.empty:
+        st.info("No trades found in the live log.")
+    else:
+        traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
+        pos_rows = []
+        for t in traders:
+            pos = _live_positions_from_log(t, selected_date)
+            pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
+        pos_table = pd.DataFrame(pos_rows).sort_values("trader")
+        st.dataframe(pos_table, use_container_width=True)
+except Exception as e:
+    st.warning(f"Could not render live positions: {e}")
+
+st.markdown("---")
 
 # ==========================
 # Trade entry
@@ -349,8 +385,7 @@ def _pnl_compute_and_package():
        - Spread (Buy A / Sell B) -> next-day Bid(A) - Ask(B)
        Produces Excel if possible, else CSV bundle.
     """
-    _ensure_log_exists()
-    tl = pd.read_csv(LOG_FILE)
+    tl = _load_log_df()
     if tl.empty:
         return None, "No trades logged yet.", 0
 
@@ -363,6 +398,7 @@ def _pnl_compute_and_package():
     # load curves + prep next-day lookup
     curves = pd.read_csv(CURVE_FILE).copy()
     curves["date"] = curves["date"].astype(str)
+    curves["contract"] = curves["contract"].astype(str)
     curves["bid"]  = pd.to_numeric(curves["bid"], errors="coerce")
     curves["ask"]  = pd.to_numeric(curves["ask"], errors="coerce")
     curves["_dt"]  = pd.to_datetime(curves["date"], errors="coerce", infer_datetime_format=True)
@@ -414,7 +450,7 @@ def _pnl_compute_and_package():
     spreads = df[df["type"].str.lower() == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
-        lots = int(r["lots"])
+        lots = int(pd.to_numeric(r.get("lots", 0), errors="coerce"))
         buy_m = _canon_month(r.get("spread_buy", ""))
         sell_m = _canon_month(r.get("spread_sell", ""))
         ts = r["_ts"]
@@ -545,7 +581,7 @@ def _pnl_compute_and_package():
 
     return xlsx_bytes, csv_text, pending
 
-# ---------- Admin download ----------
+# ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
 password = st.text_input("Enter admin password to download trade log", type="password")
 if password == "freightadmintrader":
@@ -553,6 +589,11 @@ if password == "freightadmintrader":
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, "rb") as f:
             st.download_button("📥 Download Trade Log (CSV)", f, file_name="trader_log.csv")
+
+    # Forward curves download (so you can recompute MTM offline if needed)
+    if os.path.exists(CURVE_FILE):
+        with open(CURVE_FILE, "rb") as f:
+            st.download_button("📥 Download Forward Curves (CSV)", f, file_name="forward_curves.csv")
 
     # P&L pack (computed on demand)
     xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
@@ -572,5 +613,26 @@ if password == "freightadmintrader":
         )
     if pending:
         st.warning(f"Some trades have no next-day curve yet (P&L pending): {pending} row(s). Upload the next day’s forward_curves to finalize.")
+
+    st.markdown("### 🔄 Restore / Replace Live Trade Log")
+    up = st.file_uploader("Upload master trader_log.csv to replace the live log", type=["csv"], key="restore_log")
+    if up is not None:
+        df_up = pd.read_csv(up)
+        required = {"timestamp","date","trader","type","contract","side","price","lots","spread_buy","spread_sell","spread_price"}
+        cols_lower = set(c.lower() for c in df_up.columns)
+        missing = [c for c in required if c not in cols_lower]
+        if missing:
+            st.error(f"Uploaded CSV missing columns: {missing}")
+        else:
+            # Keep incoming column order as-is
+            df_up.to_csv(LOG_FILE, index=False)
+            st.success("✅ Live trade log replaced from uploaded file. Limits now reflect this state.")
+
+    if os.path.exists(TEMPLATE_FILE) and os.path.getsize(TEMPLATE_FILE) > 0:
+        if st.button("Use trader_log_template.csv as Live Log"):
+            shutil.copy(TEMPLATE_FILE, LOG_FILE)
+            st.success("✅ Live trade log refreshed from trader_log_template.csv")
+    else:
+        st.caption("No trader_log_template.csv found in /data (or it's empty).")
 else:
     st.caption("Enter the admin password to enable downloads.")
