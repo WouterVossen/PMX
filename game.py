@@ -224,9 +224,9 @@ def _append_log_row(row: dict):
     header_needed = not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0
     df.to_csv(LOG_FILE, mode="a", header=header_needed, index=False)
 
- --------------------------
- Live positions table (sanity)
- --------------------------
+ #--------------------------
+ #Live positions table (sanity)
+ #--------------------------
 st.markdown("### 📊 Current Live Positions (as of selected day)")
 try:
     live_df = _load_log_df()
