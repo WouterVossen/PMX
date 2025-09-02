@@ -245,9 +245,9 @@ def _append_log_row(row: dict):
 
 #st.markdown("---")
 
- ==========================
- Trade entry
- ==========================
+==========================
+Trade entry
+==========================
 
 st.markdown("### 🧾 Submit Your Trades")
 
