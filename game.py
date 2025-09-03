@@ -228,23 +228,23 @@ def _append_log_row(row: dict):
  #--------------------------
  #Live positions table (sanity)
  #--------------------------
-#st.markdown("### 📊 Current Live Positions (as of selected day)")
-#try:
-#    live_df = _load_log_df()
-#    if live_df.empty:
-#        st.info("No trades found in the live log.")
-#    else:
-#        traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
-#        pos_rows = []
-#        for t in traders:
-#            pos = _live_positions_from_log(t, selected_date)
-#            pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
-#        pos_table = pd.DataFrame(pos_rows).sort_values("trader")
-#        st.dataframe(pos_table, use_container_width=True)
-#except Exception as e:
-#    st.warning(f"Could not render live positions: {e}")
+st.markdown("### 📊 Current Live Positions (as of selected day)")
+try:
+    live_df = _load_log_df()
+    if live_df.empty:
+        st.info("No trades found in the live log.")
+    else:
+        traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
+        pos_rows = []
+        for t in traders:
+            pos = _live_positions_from_log(t, selected_date)
+            pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
+        pos_table = pd.DataFrame(pos_rows).sort_values("trader")
+        st.dataframe(pos_table, use_container_width=True)
+except Exception as e:
+    st.warning(f"Could not render live positions: {e}")
 
-#st.markdown("---")
+st.markdown("---")
 
 # ==========================
 # Trade entry
