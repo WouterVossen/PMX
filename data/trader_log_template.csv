@@ -87,9 +87,9 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/3/2025 9:57,9/3/2025,sofie,outright,Sep,Sell,14100,150,,,
 9/3/2025 9:57,9/3/2025,sofie,outright,Dec,Buy,12700,100,,,
 9/3/2025 9:58,9/3/2025,sofie,outright,Oct,Sell,14100,100,,,
-9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,spread,,,,60,Nov,Oct,-400
-9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,outright,Nov,Buy,13700,60,,,
-9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,outright,Oct,Sell,14100,60,,,
-9/3/2025 10:10,9/3/2025,Abhimanyu Krishnamoorthy,outright,Oct,Sell,14100,35,,,
-9/3/2025 10:10,9/3/2025,Abhimanyu Krishnamoorthy,outright,Sep,Sell,14100,5,,,
+9/3/2025 10:09,9/3/2025,Abhimanyu,spread,,,,60,Nov,Oct,-400
+9/3/2025 10:09,9/3/2025,Abhimanyu,outright,Nov,Buy,13700,60,,,
+9/3/2025 10:09,9/3/2025,Abhimanyu,outright,Oct,Sell,14100,60,,,
+9/3/2025 10:10,9/3/2025,Abhimanyu,outright,Oct,Sell,14100,35,,,
+9/3/2025 10:10,9/3/2025,Abhimanyu,outright,Sep,Sell,14100,5,,,
 9/3/2025 10:19,9/3/2025,Danish Suhaimi,outright,Oct,Sell,14100,20,,,
