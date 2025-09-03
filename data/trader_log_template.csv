@@ -30,8 +30,6 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/1/2025 9:40,9/1/2025,elisa,outright,Dec,Buy,12800,30,,,
 9/1/2025 9:42,9/1/2025,CLT,outright,Sep,Sell,14700,100,,,
 9/1/2025 9:42,9/1/2025,CLT,spread,,,,50,Dec,Oct,-1900
-9/1/2025 9:42,9/1/2025,CLT,outright,Dec,Buy,12800,50,,,
-9/1/2025 9:42,9/1/2025,CLT,outright,Oct,Sell,14700,50,,,
 9/1/2025 9:42,9/1/2025,Erica,outright,Oct,Buy,14800,25,,,
 9/1/2025 9:46,9/1/2025,GRO,outright,Sep,Sell,14700,50,,,
 9/1/2025 9:47,9/1/2025,GRO,outright,Oct,Sell,14700,50,,,
@@ -43,11 +41,7 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/1/2025 10:53,9/1/2025,Carlos1,outright,Nov,Buy,14050,40,,,
 9/1/2025 10:53,9/1/2025,Carlos1,outright,Sep,Sell,14700,40,,,
 9/2/2025 10:47,9/2/2025,CLT,spread,,,,50,Dec,Sep,-1600
-9/2/2025 10:47,9/2/2025,CLT,outright,Dec,Buy,12550,50,,,
-9/2/2025 10:47,9/2/2025,CLT,outright,Sep,Sell,14150,50,,,
 9/2/2025 10:49,9/2/2025,CLT,spread,,,,50,Dec,Oct,-1500
-9/2/2025 10:49,9/2/2025,CLT,outright,Dec,Buy,12550,50,,,
-9/2/2025 10:49,9/2/2025,CLT,outright,Oct,Sell,14050,50,,,
 9/2/2025 10:50,9/2/2025,Erica,outright,Sep,Sell,14150,30,,,
 9/2/2025 11:02,9/2/2025,elisa,outright,Sep,Sell,14150,20,,,
 9/2/2025 11:02,9/2/2025,elisa,outright,Oct,Sell,14050,10,,,
