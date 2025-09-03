@@ -382,24 +382,31 @@ st.markdown("---")
 # ==========================
 def _pnl_compute_and_package():
     """
-    Daily P&L path via inventory replay:
-      - Replay trades across days in time order.
-      - FIFO realized P&L on closes (price vs price).
-      - Unrealized MTM each day to executable marks (longs->Bid, shorts->Ask).
-      - Daily P&L = realized_today + [ MTM_today - MTM_yesterday ].
-    Produces Excel (or CSV) with 'Daily_and_Cumulative' and 'Summary'.
+    Daily P&L via T+1 marks:
+      - Use all curve days <= selected_date (keep today's curve).
+      - Ignore trades on selected_date (today) entirely for P&L.
+      - For each curve day d where next curve day d+1 exists:
+          * Apply FIFO closes on trades that occurred on day d -> realized_d
+          * Compute EOD inventory value at day d marks (Bid for longs, Ask for shorts)
+          * Compute same EOD inventory value at day d+1 marks
+          * delta_unrealized_d = Value_{d+1}(EOD_d) - Value_{d}(EOD_d)
+          * pnl_day_d = realized_d + delta_unrealized_d
+      - No P&L line for selected_date itself.
+    Exports:
+      - Daily_and_Cumulative (date, trader, realized, delta_unrealized, pnl_day, cum_pnl)
+      - Summary (days_played, total_pnl)
     """
     tl = _load_log_df()
     if tl.empty:
         return None, "No trades logged yet.", 0
 
-    # numeric types
+    # Numeric normalization
     for c in ["price", "lots", "spread_price"]:
         if c not in tl.columns:
             tl[c] = 0
         tl[c] = pd.to_numeric(tl[c], errors="coerce").fillna(0.0)
 
-    # ----- Load curves up to selected_date -----
+    # ----- Curves: keep up to and including selected_date (we need today's curve to mark yesterday) -----
     curves = pd.read_csv(CURVE_FILE).copy()
     curves["date"] = curves["date"].astype(str)
     curves["contract"] = curves["contract"].astype(str)
@@ -409,29 +416,30 @@ def _pnl_compute_and_package():
     if curves["_dt"].isna().all():
         return None, "Curve dates could not be parsed.", 0
 
-    try:
-        sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
-    except Exception:
+    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
+    if pd.isna(sel_dt):
         sel_dt = curves["_dt"].max()
 
     curves = curves[curves["_dt"] <= sel_dt].copy()
     if curves.empty:
         return None, "No curve data up to the selected day.", 0
 
-    # quick mark lookup + ordered curve days
+    # Fast mark lookups + ordered curve days
     bid_map = {(r["date"], r["contract"]): float(r["bid"])  for _, r in curves.iterrows()}
     ask_map = {(r["date"], r["contract"]): float(r["ask"])  for _, r in curves.iterrows()}
     curve_days = sorted(curves["date"].unique())
     curve_dt   = {d: pd.to_datetime(d, errors="coerce") for d in curve_days}
 
-    # ----- Tag spread legs (reuse your heuristic) -----
+    # ----- Identify outright fills (exclude spread summary + audit legs via heuristic) -----
     tl["timestamp"]  = tl["timestamp"].astype(str)
     tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
+
     df = tl.copy()
     df["_ts"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True)
     df["is_spread_leg"] = False
 
+    # Tag likely spread legs (same logic you already had)
     spreads = df[df["type"].str.lower() == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
@@ -466,22 +474,40 @@ def _pnl_compute_and_package():
 
     outs = df[(df["type"].str.lower() == "outright") & (~df["is_spread_leg"])].copy()
 
-    # only use trades up to selected_date
+    # Trades strictly before selected_date (ignore today's trades)
     outs["date_dt"] = pd.to_datetime(outs["date"], errors="coerce", infer_datetime_format=True)
-    outs = outs[outs["date_dt"] <= sel_dt].copy()
+    outs = outs[outs["date_dt"] < sel_dt].copy()
+    if outs.empty:
+        # Nothing to replay yet (no trades before today) -> empty pack
+        try:
+            import xlsxwriter  # noqa
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="xlsxwriter") as xw:
+                pd.DataFrame(columns=["date","trader","realized","delta_unrealized","pnl_day","cum_pnl"]).to_excel(
+                    xw, index=False, sheet_name="Daily_and_Cumulative"
+                )
+                pd.DataFrame(columns=["trader","days_played","total_pnl"]).to_excel(
+                    xw, index=False, sheet_name="Summary"
+                )
+            return bio.getvalue(), None, 0
+        except Exception:
+            csv = "# Daily_and_Cumulative\n\n# Summary\n"
+            return None, csv, 0
 
-    # canonicalize and keep enabled contracts
+    # Canonicalize contracts and keep enabled months
     outs["contract"] = outs["contract"].astype(str).map(_canon_month)
     outs = outs[outs["contract"].isin(MONTH_ORDER)].copy()
 
-    # stable intraday order
+    # Intraday order
     outs["_ts"] = pd.to_datetime(outs["timestamp"], errors="coerce", infer_datetime_format=True)
     outs = outs.sort_values(["date_dt", "_ts"]).reset_index(drop=True)
 
-    # group trades by trade day
+    # Build trades by day (string date like 'YYYY-MM-DD')
+    from collections import defaultdict, deque  # safety if not at top
     trades_by_day = defaultdict(list)
     for _, r in outs.iterrows():
-        trades_by_day[str(r["date_dt"].date())].append({
+        day_key = str(r["date_dt"].date())
+        trades_by_day[day_key].append({
             "trader": str(r["trader"]),
             "contract": str(r["contract"]),
             "side": str(r["side"]).strip().lower(),
@@ -489,33 +515,45 @@ def _pnl_compute_and_package():
             "price": float(pd.to_numeric(r.get("price", 0), errors="coerce")),
             "_ts": r["_ts"]
         })
-    # chronological within each day
     for d in trades_by_day:
         trades_by_day[d].sort(key=lambda x: (pd.to_datetime(x["_ts"]) if pd.notna(x["_ts"]) else pd.Timestamp.min))
 
-    # combined timeline = all curve days ∪ all trade days (sorted)
-    trade_days = list(trades_by_day.keys())
-    combined_days = sorted(
-        set(curve_days) | set(trade_days),
-        key=lambda s: pd.to_datetime(s, errors="coerce")
-    )
+    # Trim curve days so we start at (on/after) the first trade day
+    first_trade_dt_overall = outs["date_dt"].min()
+    curve_days = [d for d in curve_days if pd.to_datetime(d, errors="coerce") >= first_trade_dt_overall]
 
-    # helper: for any day, use the last available curve day ≤ that day for marks
-    def _effective_curve_day(day_str: str):
-        dts = pd.to_datetime(day_str, errors="coerce")
-        eligible = [d for d in curve_days if curve_dt[d] <= dts]
-        return max(eligible, key=lambda d: curve_dt[d]) if eligible else None
+    # Need at least two curve days (d and d+1) to compute a P&L line
+    if len(curve_days) < 2:
+        return None, "Not enough curve days to compute T+1 P&L (need at least two).", 0
 
-    # inventory state (FIFO)
-    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))  # trader->con->deque[(px, qty)]
+    # FIFO inventory state
+    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))  # trader->con->deque[(entry_px, qty)]
     open_short = defaultdict(lambda: defaultdict(lambda: deque()))
     realized_by_day = defaultdict(lambda: defaultdict(float))       # trader->day->realized
-    mtm_by_day      = defaultdict(lambda: defaultdict(float))       # trader->day->mtm
 
+    def _value_inventory_at_day(trader: str, day: str) -> float:
+        """Value current EOD inventory to given curve day marks."""
+        val = 0.0
+        for con in MONTH_ORDER:
+            bid = bid_map.get((day, con), None)
+            ask = ask_map.get((day, con), None)
+            if bid is not None:
+                for l_px, l_qty in list(open_long[trader][con]):
+                    val += (bid - l_px) * l_qty
+            if ask is not None:
+                for s_px, s_qty in list(open_short[trader][con]):
+                    val += (s_px - ask) * s_qty
+        return val
+
+    # Replay day-by-day using curve_days indices 0..n-2 (exclude the last curve day as "today")
     traders_all = sorted(set(outs["trader"].astype(str)))
+    daily_rows = []
 
-    for d in combined_days:
-        # 1) apply trades of day d
+    for i in range(0, len(curve_days) - 1):
+        d = curve_days[i]
+        d_next = curve_days[i + 1]
+
+        # 1) Apply all trades that occurred on day d (FIFO)
         for t in trades_by_day.get(d, []):
             trader, con, side, lots, px = t["trader"], t["contract"], t["side"], t["lots"], t["price"]
             if lots <= 0 or px == 0:
@@ -551,35 +589,13 @@ def _pnl_compute_and_package():
                 if qty > 0:
                     open_short[trader][con].append((px, qty))
 
-        # 2) end-of-day MTM using last available curve day ≤ d
-        eff = _effective_curve_day(d)
+        # 2) For each trader, value EOD inventory at day d and at day d+1, then compute delta
         for trader in traders_all:
-            if eff is None:
-                mtm_by_day[trader][d] = 0.0
-                continue
-            mtm = 0.0
-            for con in MONTH_ORDER:
-                # longs -> Bid
-                bid = bid_map.get((eff, con), None)
-                if bid is not None:
-                    for l_px, l_qty in list(open_long[trader][con]):
-                        mtm += (bid - l_px) * l_qty
-                # shorts -> Ask
-                ask = ask_map.get((eff, con), None)
-                if ask is not None:
-                    for s_px, s_qty in list(open_short[trader][con]):
-                        mtm += (s_px - ask) * s_qty
-            mtm_by_day[trader][d] = mtm
-
-    # 3) Daily P&L rows per trader
-    daily_rows = []
-    for trader in traders_all:
-        prev_mtm = 0.0
-        for i, d in enumerate(combined_days):
-            mtm_today = float(mtm_by_day[trader].get(d, 0.0))
-            delta_unreal = (mtm_today - prev_mtm) if i > 0 else mtm_today
-            realized_d = float(realized_by_day[trader].get(d, 0.0))
-            total_day = realized_d + delta_unreal
+            val_d     = _value_inventory_at_day(trader, d)
+            val_dnext = _value_inventory_at_day(trader, d_next)
+            delta_unreal = val_dnext - val_d
+            realized_d   = float(realized_by_day[trader].get(d, 0.0))
+            total_day    = realized_d + delta_unreal
             daily_rows.append({
                 "date": d,
                 "trader": trader,
@@ -587,17 +603,25 @@ def _pnl_compute_and_package():
                 "delta_unrealized": delta_unreal,
                 "pnl_day": total_day
             })
-            prev_mtm = mtm_today
 
+    # Build daily dataframe and trim per-trader start date (so days_played is correct)
     daily = pd.DataFrame(daily_rows)
     if not daily.empty:
+        # first trade date by trader
+        first_trade_dt_by_trader = outs.groupby("trader")["date_dt"].min().to_dict()
         daily["date_dt"] = pd.to_datetime(daily["date"], errors="coerce", infer_datetime_format=True)
+        daily = daily[
+            daily.apply(
+                lambda r: r["date_dt"] >= first_trade_dt_by_trader.get(r["trader"], r["date_dt"]),
+                axis=1
+            )
+        ].copy()
         daily = daily.sort_values(["trader", "date_dt"]).drop(columns=["date_dt"])
         daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum()
     else:
         daily = pd.DataFrame(columns=["date","trader","realized","delta_unrealized","pnl_day","cum_pnl"])
 
-    # Summary (keep your original layout)
+    # Summary
     summary = daily.groupby("trader", dropna=False).agg(
         days_played=("pnl_day", "count"),
         total_pnl=("pnl_day", "sum")
@@ -621,8 +645,8 @@ def _pnl_compute_and_package():
         summary.to_csv(sio, index=False)
         csv_text = sio.getvalue()
 
-    # No 'pending' under daily MTM method
     return xlsx_bytes, csv_text, 0
+
 
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
