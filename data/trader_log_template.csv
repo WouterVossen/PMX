@@ -1,5 +1,8 @@
 timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,spread_price
 9/1/2025 9:20,9/1/2025,Erica,outright,Oct,Buy,14750,5,,,
+9/1/2025 9:24,9/1/2025,Wouter,outright,Sep,Sell,14700,100,,,
+9/3/2025 9:44,9/1/2025,Wouter,outright,Dec,Buy,12700,100,,,
+9/3/2025 9:44,9/1/2025,Wouter,outright,Sep,Sell,14100,100,,,
 9/1/2025 9:24,9/1/2025,Benji,outright,Sep,Sell,14700,100,,,
 9/1/2025 9:24,9/1/2025,Benji,spread,,,,100,Dec,Sep,-1900
 9/1/2025 9:24,9/1/2025,Benji,outright,Dec,Buy,12800,100,,,
@@ -44,6 +47,7 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/2/2025 10:49,9/2/2025,CLT,spread,,,,50,Dec,Oct,-1500
 9/2/2025 10:50,9/2/2025,Erica,outright,Sep,Sell,14150,30,,,
 9/2/2025 11:02,9/2/2025,elisa,outright,Sep,Sell,14150,20,,,
+9/1/2025 9:54,9/2/2025,sofie,outright,Oct,Sell,14050,20,,,
 9/2/2025 11:02,9/2/2025,elisa,outright,Oct,Sell,14050,10,,,
 9/2/2025 11:06,9/2/2025,Bart,outright,Sep,Buy,14250,100,,,
 9/2/2025 11:09,9/2/2025,GRO,outright,Sep,Sell,14150,25,,,
@@ -55,4 +59,37 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/2/2025 11:13,9/2/2025,Carlos1,outright,Sep,Sell,14150,25,,,
 9/2/2025 11:13,9/2/2025,Carlos1,outright,Oct,Sell,14050,25,,,
 9/2/2025 11:24,9/2/2025,GRO,outright,Oct,Buy,14150,50,,,
-9/2/2025 17:17,9/2/2025,Wouter,outright,Sep,Sell,14150,100,,,
+9/3/2025 9:44,9/3/2025,Wouter,outright,Dec,Buy,12700,100,,,
+9/3/2025 9:44,9/3/2025,Wouter,outright,Sep,Sell,14100,100,,,
+9/3/2025 9:45,9/3/2025,Erica,outright,Sep,Buy,14300,30,,,
+9/3/2025 9:46,9/3/2025,elisa,outright,Dec,Buy,12700,50,,,
+9/3/2025 9:47,9/3/2025,elisa,outright,Oct,Sell,14100,40,,,
+9/3/2025 9:47,9/3/2025,kj,outright,Oct,Sell,14100,40,,,
+9/3/2025 9:48,9/3/2025,elisa,outright,Sep,Sell,14100,10,,,
+9/3/2025 9:50,9/3/2025,kj,spread,,,,50,Nov,Sep,-400
+9/3/2025 9:50,9/3/2025,kj,outright,Nov,Buy,13700,50,,,
+9/3/2025 9:50,9/3/2025,kj,outright,Sep,Sell,14100,50,,,
+9/3/2025 9:53,9/3/2025,Benji,outright,Sep,Buy,14300,100,,,
+9/3/2025 9:54,9/3/2025,Benji,spread,,,,100,Sep,Dec,1800
+9/3/2025 9:54,9/3/2025,Benji,outright,Sep,Buy,14300,100,,,
+9/3/2025 9:54,9/3/2025,Benji,outright,Dec,Sell,12500,100,,,
+9/3/2025 9:54,9/3/2025,Carlos1,outright,Dec,Sell,12500,75,,,
+9/3/2025 9:54,9/3/2025,Benji,outright,Sep,Buy,14300,100,,,
+9/3/2025 9:55,9/3/2025,Benji,spread,,,,100,Sep,Dec,1800
+9/3/2025 9:55,9/3/2025,Benji,outright,Sep,Buy,14300,100,,,
+9/3/2025 9:55,9/3/2025,Benji,outright,Dec,Sell,12500,100,,,
+9/3/2025 9:55,9/3/2025,Benji,spread,,,,100,Oct,Sep,100
+9/3/2025 9:55,9/3/2025,Benji,outright,Oct,Buy,14200,100,,,
+9/3/2025 9:55,9/3/2025,Benji,outright,Sep,Sell,14100,100,,,
+9/3/2025 9:56,9/3/2025,Carlos1,outright,Nov,Buy,13700,25,,,
+9/3/2025 9:56,9/3/2025,Carlos1,outright,Nov,Buy,13700,25,,,
+9/3/2025 9:56,9/3/2025,sofie,outright,Dec,Buy,12700,100,,,
+9/3/2025 9:57,9/3/2025,sofie,outright,Sep,Sell,14100,150,,,
+9/3/2025 9:57,9/3/2025,sofie,outright,Dec,Buy,12700,100,,,
+9/3/2025 9:58,9/3/2025,sofie,outright,Oct,Sell,14100,100,,,
+9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,spread,,,,60,Nov,Oct,-400
+9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,outright,Nov,Buy,13700,60,,,
+9/3/2025 10:09,9/3/2025,Abhimanyu Krishnamoorthy,outright,Oct,Sell,14100,60,,,
+9/3/2025 10:10,9/3/2025,Abhimanyu Krishnamoorthy,outright,Oct,Sell,14100,35,,,
+9/3/2025 10:10,9/3/2025,Abhimanyu Krishnamoorthy,outright,Sep,Sell,14100,5,,,
+9/3/2025 10:19,9/3/2025,Danish Suhaimi,outright,Oct,Sell,14100,20,,,
