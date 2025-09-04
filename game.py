@@ -626,7 +626,7 @@ def _pnl_compute_and_package():
 
     return xlsx_bytes, csv_text, 0
 
- --------------------------
+--------------------------
  Positions as of LAST completed day (EOD prior to config.json)
  --------------------------
 st.markdown("### 📊 Positions as of last completed day")
