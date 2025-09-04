@@ -244,7 +244,79 @@ def _append_log_row(row: dict):
 #except Exception as e:
 #    st.warning(f"Could not render live positions: {e}")
 
-st.markdown("---")
+#st.markdown("---")
+
+# ==========================
+# P&L snapshot (same as Excel "Summary")
+# ==========================
+st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
+
+try:
+    # Reuse the exact same computation you export in Admin
+    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
+
+    summary_df = None
+    daily_df = None
+
+    if xlsx_bytes:
+        # Read the Excel bytes returned by _pnl_compute_and_package()
+        from io import BytesIO
+        bio = BytesIO(xlsx_bytes)
+        xl = pd.ExcelFile(bio)
+        # Load Summary and Daily sheets if present
+        if "Summary" in xl.sheet_names:
+            summary_df = xl.parse("Summary")
+        if "Daily_and_Cumulative" in xl.sheet_names:
+            daily_df = xl.parse("Daily_and_Cumulative")
+
+    elif csv_text:
+        # Fallback: the CSV bundle contains two blocks. Parse them.
+        import io
+        raw = csv_text
+        # Expect markers "# Trades_T+1_PnL" or "# Daily_and_Cumulative" and "# Summary"
+        # Try to split safely even if ordering changes slightly
+        if "# Summary" in raw:
+            head, tail = raw.split("# Summary", 1)
+            # Find the daily part within head
+            daily_part = ""
+            for marker in ["# Daily_and_Cumulative", "# Trades_T+1_PnL"]:
+                if marker in head:
+                    daily_part = head.split(marker, 1)[1]
+                    break
+            daily_part = daily_part.strip()
+            tail = tail.strip()
+            if daily_part:
+                daily_df = pd.read_csv(io.StringIO(daily_part))
+            if tail:
+                summary_df = pd.read_csv(io.StringIO(tail))
+
+    # Render summary (leaderboard)
+    if summary_df is not None and not summary_df.empty:
+        # Cosmetic: ensure sensible column names if writer changed them
+        ren = {c: c.strip().lower() for c in summary_df.columns}
+        summary_df.rename(columns=ren, inplace=True)
+        # Standardize expected column names
+        summary_df.rename(columns={
+            "total_pnl": "total_pnl",
+            "days_played": "days_played",
+            "trader": "trader"
+        }, inplace=True)
+        # Sort by total_pnl desc just like the pack
+        if "total_pnl" in summary_df.columns:
+            summary_df = summary_df.sort_values("total_pnl", ascending=False)
+        st.dataframe(summary_df, use_container_width=True)
+        if pending:
+            st.caption("⚠️ Some trades lack next-day curves; P&L for those will finalize when you upload the next day’s curve.")
+    else:
+        st.info("No P&L available yet. Make sure there are trades before today and curves up to the current config date.")
+
+    # Optional: expandable daily table (same as 'Daily_and_Cumulative')
+    if daily_df is not None and not daily_df.empty:
+        with st.expander("Show daily P&L breakdown"):
+            st.dataframe(daily_df, use_container_width=True)
+
+except Exception as e:
+    st.warning(f"Could not render P&L leaderboard: {e}")
 
 # ==========================
 # Trade entry
