@@ -673,7 +673,7 @@ def _pnl_compute_and_package():
         csv_text = sio.getvalue()
 
     return xlsx_bytes, csv_text, 0
-'''
+"""
 # ==========================
 # P&L snapshot (same numbers as Excel "Summary")
 # ==========================
@@ -718,7 +718,7 @@ try:
 
 except Exception as e:
     st.warning(f"Could not render P&L leaderboard: {e}")
-'''
+"""
     
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
