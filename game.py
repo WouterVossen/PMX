@@ -673,52 +673,51 @@ def _pnl_compute_and_package():
         csv_text = sio.getvalue()
 
     return xlsx_bytes, csv_text, 0
-"""
+
 # ==========================
 # P&L snapshot (same numbers as Excel "Summary")
 # ==========================
-st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
-
-try:
-    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
-
-    summary_df = None
-
-    if xlsx_bytes:
-        from io import BytesIO
-        bio = BytesIO(xlsx_bytes)
-        xl = pd.ExcelFile(bio)
-        if "Summary" in xl.sheet_names:
-            summary_df = xl.parse("Summary")
-
-    elif csv_text:
-        import io
-        raw = csv_text
-        if "# Summary" in raw:
-            summary_part = raw.split("# Summary", 1)[1].strip()
-            if summary_part:
-                summary_df = pd.read_csv(io.StringIO(summary_part))
-
-    if summary_df is not None and not summary_df.empty:
-        # Normalize column names just in case
-        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
-        summary_df.rename(columns={
-            "total_pnl": "total_pnl",
-            "days_played": "days_played",
-            "trader": "trader"
-        }, inplace=True)
-        # Sort by total_pnl desc to match the pack
-        if "total_pnl" in summary_df.columns:
-            summary_df = summary_df.sort_values("total_pnl", ascending=False)
-        st.dataframe(summary_df, use_container_width=True)
-        if pending:
-            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
-    else:
-        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
-
-except Exception as e:
-    st.warning(f"Could not render P&L leaderboard: {e}")
-"""
+#st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
+#
+#try:
+#    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
+#
+#    summary_df = None
+#
+#    if xlsx_bytes:
+#        from io import BytesIO
+#        bio = BytesIO(xlsx_bytes)
+#        xl = pd.ExcelFile(bio)
+#        if "Summary" in xl.sheet_names:
+#            summary_df = xl.parse("Summary")
+#
+#    elif csv_text:
+#        import io
+#        raw = csv_text
+#        if "# Summary" in raw:
+#            summary_part = raw.split("# Summary", 1)[1].strip()
+#            if summary_part:
+#                summary_df = pd.read_csv(io.StringIO(summary_part))
+#
+#    if summary_df is not None and not summary_df.empty:
+#        # Normalize column names just in case
+#        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
+#        summary_df.rename(columns={
+#            "total_pnl": "total_pnl",
+#            "days_played": "days_played",
+#            "trader": "trader"
+#        }, inplace=True)
+#        # Sort by total_pnl desc to match the pack
+#        if "total_pnl" in summary_df.columns:
+#            summary_df = summary_df.sort_values("total_pnl", ascending=False)
+#        st.dataframe(summary_df, use_container_width=True)
+#        if pending:
+#            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
+#    else:
+#        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
+#
+#except Exception as e:
+#    st.warning(f"Could not render P&L leaderboard: {e}")
     
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
