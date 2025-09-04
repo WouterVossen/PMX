@@ -382,39 +382,41 @@ st.markdown("---")
 # ==========================
 def _pnl_compute_and_package():
     """
-    Daily P&L via T+1 marks with robust date normalization.
+    Daily P&L via T+1 'entry-anchored' closable marks:
 
-    Rules:
-      - Keep all curve days <= selected_date (we need today's curve to mark yesterday).
-      - Ignore trades on selected_date (today) entirely for P&L.
-      - For each curve day d where d+1 exists:
-          * Apply FIFO closes on trades that occurred on d -> realized_d
-          * Value end-of-day inventory at d marks (Bid for longs, Ask for shorts)
-          * Value the SAME end-of-day inventory at d+1 marks
-          * delta_unrealized_d = Value_{d+1}(EOD_d) - Value_{d}(EOD_d)
-          * pnl_day_d = realized_d + delta_unrealized_d
-      - No P&L row for selected_date itself.
-      - "Days played" starts at each trader's first trade day.
+      • Keep all curve days <= selected_date (we need today’s curve to mark yesterday).
+      • Ignore trades on selected_date (today).
+      • For each curve day d where d+1 exists:
+          1) Apply FIFO closes for trades done on day d (realized_d = price vs price).
+          2) Split EOD inventory into:
+             - lots opened on day d (new_today)
+             - lots opened before d (carry)
+          3) Compute unrealized for day d using *closable* marks:
+             - new_today:
+                 long:  next_bid(d+1) − entry_ask(d)
+                 short: entry_bid(d)  − next_ask(d+1)
+             - carry:
+                 long:  next_bid(d+1) − today_bid(d)
+                 short: today_ask(d)  − next_ask(d+1)
+          4) pnl_day_d = realized_d + unrealized_d
+      • No P&L row for selected_date itself.
 
     Exports:
       - Daily_and_Cumulative (date, trader, realized, delta_unrealized, pnl_day, cum_pnl)
       - Summary (days_played, total_pnl)
     """
     from collections import defaultdict, deque
+    tl = _load_log_df()
+    if tl.empty:
+        return None, "No trades logged yet.", 0
 
-    # --- helpers ---
     def _to_ts(x):
         return pd.to_datetime(x, errors="coerce", infer_datetime_format=True)
-
     def _to_iso(dt_like):
         dt = pd.to_datetime(dt_like, errors="coerce")
         if pd.isna(dt):
             return None
         return dt.strftime("%Y-%m-%d")
-
-    tl = _load_log_df()
-    if tl.empty:
-        return None, "No trades logged yet.", 0
 
     # numeric normalization
     for c in ["price", "lots", "spread_price"]:
@@ -422,7 +424,7 @@ def _pnl_compute_and_package():
             tl[c] = 0
         tl[c] = pd.to_numeric(tl[c], errors="coerce").fillna(0.0)
 
-    # ----- Curves (keep <= selected_date; normalize to ISO) -----
+    # ----- Curves (<= selected_date; normalize to ISO) -----
     curves = pd.read_csv(CURVE_FILE).copy()
     curves["date"] = curves["date"].astype(str)
     curves["contract"] = curves["contract"].astype(str)
@@ -445,7 +447,7 @@ def _pnl_compute_and_package():
     ask_map = {(r["date_iso"], r["contract"]): float(r["ask"]) for _, r in curves.iterrows()}
     curve_days_iso = sorted(curves["date_iso"].unique())
 
-    # ----- Identify outright fills (exclude spread summary + audit legs via heuristic) -----
+    # ----- Identify outright fills (exclude spread summary + audit legs) -----
     tl["timestamp"]  = tl["timestamp"].astype(str)
     tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
@@ -453,7 +455,7 @@ def _pnl_compute_and_package():
     df["_ts"] = _to_ts(df["timestamp"])
     df["is_spread_leg"] = False
 
-    # tag likely spread legs (same logic you used)
+    # tag likely spread legs (existing heuristic)
     spreads = df[df["type"].str.lower() == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
@@ -492,7 +494,6 @@ def _pnl_compute_and_package():
     outs["date_dt"] = _to_ts(outs["date"])
     outs = outs[outs["date_dt"] < sel_dt].copy()
     if outs.empty:
-        # nothing to replay yet
         try:
             import xlsxwriter  # noqa
             bio = BytesIO()
@@ -512,16 +513,15 @@ def _pnl_compute_and_package():
     outs["contract"] = outs["contract"].astype(str).map(_canon_month)
     outs = outs[outs["contract"].isin(MONTH_ORDER)].copy()
 
-    # intraday order + ISO day key for grouping
+    # intraday order + ISO day key
     outs["_ts"] = _to_ts(outs["timestamp"])
     outs = outs.sort_values(["date_dt", "_ts"]).reset_index(drop=True)
     outs["date_iso"] = outs["date_dt"].dt.strftime("%Y-%m-%d")
 
-    # group trades by ISO day string
+    # trades by ISO day
     trades_by_day = defaultdict(list)
     for _, r in outs.iterrows():
-        day_key = r["date_iso"]
-        trades_by_day[day_key].append({
+        trades_by_day[r["date_iso"]].append({
             "trader": str(r["trader"]),
             "contract": str(r["contract"]),
             "side": str(r["side"]).strip().lower(),
@@ -541,81 +541,100 @@ def _pnl_compute_and_package():
     if len(curve_days_iso) < 2:
         return None, "Not enough curve days to compute T+1 P&L (need at least two).", 0
 
-    # FIFO inventory
-    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))  # trader->con->deque[(entry_px, qty)]
+    # FIFO inventory with open date tagging: (entry_px, qty, open_day_iso)
+    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))  # trader->con->deque[(px, qty, open_day)]
     open_short = defaultdict(lambda: defaultdict(lambda: deque()))
     realized_by_day = defaultdict(lambda: defaultdict(float))       # trader->ISO day->realized
-
-    def _value_inventory_at_day(trader: str, day_iso: str) -> float:
-        """Value current EOD inventory to given curve day marks."""
-        val = 0.0
-        for con in MONTH_ORDER:
-            bid = bid_map.get((day_iso, con), None)
-            ask = ask_map.get((day_iso, con), None)
-            if bid is not None:
-                for l_px, l_qty in list(open_long[trader][con]):
-                    val += (bid - l_px) * l_qty
-            if ask is not None:
-                for s_px, s_qty in list(open_short[trader][con]):
-                    val += (s_px - ask) * s_qty
-        return val
-
     traders_all = sorted(set(outs["trader"].astype(str)))
 
+    def _unreal_for_day(trader: str, day_iso: str, next_iso: str) -> float:
+        """Unrealized for day d using entry-anchored T+1 closable logic."""
+        total = 0.0
+        for con in MONTH_ORDER:
+            bid_d   = bid_map.get((day_iso,  con), None)
+            ask_d   = ask_map.get((day_iso,  con), None)
+            bid_nxt = bid_map.get((next_iso, con), None)
+            ask_nxt = ask_map.get((next_iso, con), None)
+
+            # Longs: entry Ask vs Bid marks
+            for l_px, l_qty, open_day in list(open_long[trader][con]):
+                if open_day == day_iso:
+                    # new today: next_bid - entry_ask
+                    if bid_nxt is not None:
+                        total += (bid_nxt - l_px) * l_qty
+                else:
+                    # carry: next_bid - today_bid
+                    if (bid_d is not None) and (bid_nxt is not None):
+                        total += (bid_nxt - bid_d) * l_qty
+
+            # Shorts: entry Bid vs Ask marks
+            for s_px, s_qty, open_day in list(open_short[trader][con]):
+                if open_day == day_iso:
+                    # new today: entry_bid - next_ask
+                    if ask_nxt is not None:
+                        total += (s_px - ask_nxt) * s_qty
+                else:
+                    # carry: today_ask - next_ask
+                    if (ask_d is not None) and (ask_nxt is not None):
+                        total += (ask_d - ask_nxt) * s_qty
+        return total
+
     daily_rows = []
-    # iterate all curve days except the last one (no P&L for today)
+    # iterate all curve days except the last one (no P&L for "today")
     for i in range(0, len(curve_days_iso) - 1):
         d = curve_days_iso[i]
         d_next = curve_days_iso[i + 1]
 
-        # 1) apply all trades that occurred on day d (FIFO)
+        # 1) apply all trades on day d (FIFO, realized = price vs price)
         for t in trades_by_day.get(d, []):
             trader, con, side, lots, px = t["trader"], t["contract"], t["side"], t["lots"], t["price"]
             if lots <= 0 or px == 0:
                 continue
             if side == "buy":
                 qty = lots
+                # close shorts first
                 while qty > 0 and open_short[trader][con]:
-                    s_px, s_qty = open_short[trader][con][0]
+                    s_px, s_qty, s_day = open_short[trader][con][0]
                     close_qty = min(qty, s_qty)
-                    realized = (s_px - px) * close_qty  # short close
+                    # short close: entry(sell) - exit(buy)
+                    realized = (s_px - px) * close_qty
                     realized_by_day[trader][d] += realized
                     s_qty -= close_qty
                     qty   -= close_qty
                     if s_qty == 0:
                         open_short[trader][con].popleft()
                     else:
-                        open_short[trader][con][0] = (s_px, s_qty)
+                        open_short[trader][con][0] = (s_px, s_qty, s_day)
                 if qty > 0:
-                    open_long[trader][con].append((px, qty))
+                    open_long[trader][con].append((px, qty, d))
             elif side == "sell":
                 qty = lots
+                # close longs first
                 while qty > 0 and open_long[trader][con]:
-                    l_px, l_qty = open_long[trader][con][0]
+                    l_px, l_qty, l_day = open_long[trader][con][0]
                     close_qty = min(qty, l_qty)
-                    realized = (px - l_px) * close_qty  # long close
+                    # long close: exit(sell) - entry(buy)
+                    realized = (px - l_px) * close_qty
                     realized_by_day[trader][d] += realized
                     l_qty -= close_qty
                     qty   -= close_qty
                     if l_qty == 0:
                         open_long[trader][con].popleft()
                     else:
-                        open_long[trader][con][0] = (l_px, l_qty)
+                        open_long[trader][con][0] = (l_px, l_qty, l_day)
                 if qty > 0:
-                    open_short[trader][con].append((px, qty))
+                    open_short[trader][con].append((px, qty, d))
 
-        # 2) value EOD inventory at day d and at day d+1, compute delta
+        # 2) unrealized for day d using entry-anchored T+1 closable logic
         for trader in traders_all:
-            val_d     = _value_inventory_at_day(trader, d)
-            val_dnext = _value_inventory_at_day(trader, d_next)
-            delta_unreal = val_dnext - val_d
-            realized_d   = float(realized_by_day[trader].get(d, 0.0))
-            total_day    = realized_d + delta_unreal
+            unreal_d = _unreal_for_day(trader, d, d_next)
+            realized_d = float(realized_by_day[trader].get(d, 0.0))
+            total_day = realized_d + unreal_d
             daily_rows.append({
-                "date": d,  # ISO date of the P&L day
+                "date": d,  # ISO date for P&L day
                 "trader": trader,
                 "realized": realized_d,
-                "delta_unrealized": delta_unreal,
+                "delta_unrealized": unreal_d,
                 "pnl_day": total_day
             })
 
@@ -624,7 +643,6 @@ def _pnl_compute_and_package():
     if not daily.empty:
         first_trade_dt_by_trader = outs.groupby("trader")["date_dt"].min()
         first_trade_iso_by_trader = {k: _to_iso(v) for k, v in first_trade_dt_by_trader.items()}
-
         daily["date_dt"] = _to_ts(daily["date"])
         daily = daily[
             daily.apply(
