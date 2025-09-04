@@ -449,15 +449,15 @@ def _pnl_compute_and_package():
     bid_today = {con: bid_map.get((sel_iso, con), None) for con in MONTH_ORDER}
     ask_today = {con: ask_map.get((sel_iso, con), None) for con in MONTH_ORDER}
 
-    # ----- Identify outright fills (exclude spread summary + audit legs) -----
+    # ----- Identify outright fills (exclude spread summary; INCLUDE spread legs) -----
     tl["timestamp"]  = tl["timestamp"].astype(str)
     tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
     df = tl.copy()
     df["_ts"] = _to_ts(df["timestamp"])
-    df["is_spread_leg"] = False
 
-    # tag likely spread legs (existing heuristic)
+    # We still tag spread legs, but we won’t exclude them anymore
+    df["is_spread_leg"] = False
     spreads = df[df["type"].str.lower() == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
@@ -465,7 +465,6 @@ def _pnl_compute_and_package():
         buy_m = _canon_month(r.get("spread_buy", ""))
         sell_m = _canon_month(r.get("spread_sell", ""))
         ts = r["_ts"]
-
         cand = df[
             (df["trader_key"] == tkey) &
             (df["date"] == r["date"]) &
@@ -477,7 +476,6 @@ def _pnl_compute_and_package():
         if pd.notna(ts):
             window = cand[(cand["_ts"] >= ts - pd.Timedelta(seconds=3)) &
                           (cand["_ts"] <= ts + pd.Timedelta(seconds=3))]
-
         leg_buy = window[
             (window["contract"].astype(str).map(_canon_month) == buy_m) &
             (window["side"].astype(str).str.lower() == "buy")
@@ -490,7 +488,8 @@ def _pnl_compute_and_package():
             df.loc[leg_buy.index[:1], "is_spread_leg"] = True
             df.loc[leg_sell.index[:1], "is_spread_leg"] = True
 
-    outs = df[(df["type"].str.lower() == "outright") & (~df["is_spread_leg"])].copy()
+    # ✅ FIX: include all outrights, regardless of spread-leg tag
+    outs = df[df["type"].str.lower() == "outright"].copy()
 
     # trades strictly before selected_date (ignore today's trades)
     outs["date_dt"] = _to_ts(outs["date"])
@@ -534,28 +533,26 @@ def _pnl_compute_and_package():
     for d in trades_by_day:
         trades_by_day[d].sort(key=lambda x: (pd.to_datetime(x["_ts"]) if pd.notna(x["_ts"]) else pd.Timestamp.min))
 
-    # trade days timeline (only days with any trades, all < selected_date)
+    # trade days timeline
     trade_days_iso = sorted(trades_by_day.keys())
 
-    # FIFO inventory with entry price + open day tagging
-    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))  # trader->con->deque[(entry_px, qty, open_day)]
+    # FIFO inventory with entry price tagging
+    open_long  = defaultdict(lambda: defaultdict(lambda: deque()))
     open_short = defaultdict(lambda: defaultdict(lambda: deque()))
-    realized_cum = defaultdict(float)  # trader -> cumulative realized P&L up to current loop day
-    prev_cum_total = defaultdict(float)  # trader -> cumulative total as of previous loop day
+    realized_cum = defaultdict(float)
+    prev_cum_total = defaultdict(float)
 
     traders_all = sorted(outs["trader"].astype(str).unique())
 
     def _cum_as_of_today(trader: str) -> float:
-        """Cumulative as-of-today P&L = realized (to date) + entry-anchored unrealized valued at today's closable marks."""
+        """Cumulative as-of-today P&L = realized (to date) + entry-anchored unrealized valued at today's marks."""
         unreal = 0.0
         for con in MONTH_ORDER:
             b_today = bid_today.get(con, None)
             a_today = ask_today.get(con, None)
-            # Longs: (Bid_today - entry_ask) * qty
             if b_today is not None:
                 for px, qty, _od in open_long[trader][con]:
                     unreal += (b_today - px) * qty
-            # Shorts: (entry_bid - Ask_today) * qty
             if a_today is not None:
                 for px, qty, _od in open_short[trader][con]:
                     unreal += (px - a_today) * qty
@@ -565,18 +562,17 @@ def _pnl_compute_and_package():
 
     # process each trade day < selected_date
     for d in trade_days_iso:
-        # 1) apply trades for day d (FIFO; realized = price vs price)
+        # 1) apply trades for day d
         for t in trades_by_day.get(d, []):
             trader, con, side, lots, px = t["trader"], t["contract"], t["side"], t["lots"], t["price"]
             if lots <= 0 or px == 0 or con not in MONTH_ORDER:
                 continue
             if side == "buy":
                 qty = lots
-                # close shorts first
                 while qty > 0 and open_short[trader][con]:
                     s_px, s_qty, s_day = open_short[trader][con][0]
                     close_qty = min(qty, s_qty)
-                    realized = (s_px - px) * close_qty  # short close: entry(sell) - exit(buy)
+                    realized = (s_px - px) * close_qty
                     realized_cum[trader] += realized
                     s_qty -= close_qty
                     qty   -= close_qty
@@ -584,16 +580,14 @@ def _pnl_compute_and_package():
                         open_short[trader][con].popleft()
                     else:
                         open_short[trader][con][0] = (s_px, s_qty, s_day)
-                # remainder becomes new long opened today at entry Ask(px)
                 if qty > 0:
                     open_long[trader][con].append((px, qty, d))
             elif side == "sell":
                 qty = lots
-                # close longs first
                 while qty > 0 and open_long[trader][con]:
                     l_px, l_qty, l_day = open_long[trader][con][0]
                     close_qty = min(qty, l_qty)
-                    realized = (px - l_px) * close_qty  # long close: exit(sell) - entry(buy)
+                    realized = (px - l_px) * close_qty
                     realized_cum[trader] += realized
                     l_qty -= close_qty
                     qty   -= close_qty
@@ -601,34 +595,25 @@ def _pnl_compute_and_package():
                         open_long[trader][con].popleft()
                     else:
                         open_long[trader][con][0] = (l_px, l_qty, l_day)
-                # remainder becomes new short opened today at entry Bid(px)
                 if qty > 0:
                     open_short[trader][con].append((px, qty, d))
 
-        # 2) compute cumulative as-of-today and day P&L for every trader
+        # 2) cumulative as-of-today and day P&L
         for trader in traders_all:
             cum_today = _cum_as_of_today(trader)
             pnl_day = cum_today - prev_cum_total[trader]
-            # delta_unrealized = pnl_day - realized_today; realized_today is (realized_cum - prev_realized_cum)
-            # we don't track prev_realized separately; show realized=0 unless you want to break it out.
-            # To show realized for the day, recompute realized_today by diffing a shadow copy:
-            # simpler: compute realized_today on the fly per trader by snapshot before trades
-            # For now, keep realized=0 unless you track per-day realized separately in the loop above.
-
-            # If you want actual realized_today, uncomment the tracking structure at top and use it here.
             daily_rows.append({
                 "date": d,
                 "trader": trader,
-                "realized": 0.0,                 # optional: swap in realized_today if you track it
-                "delta_unrealized": pnl_day,     # the whole move is unrealized component in this entry-anchored breakdown
+                "realized": 0.0,
+                "delta_unrealized": pnl_day,
                 "pnl_day": pnl_day
             })
             prev_cum_total[trader] = cum_today
 
-    # Build daily DF and cum_pnl properly
+    # Build daily DF
     daily = pd.DataFrame(daily_rows)
     if not daily.empty:
-        # cum_pnl is cumulative sum per trader over pnl_day
         daily["date_dt"] = _to_ts(daily["date"])
         daily = daily.sort_values(["trader", "date_dt"])
         daily["cum_pnl"] = daily.groupby("trader")["pnl_day"].cumsum()
@@ -661,7 +646,6 @@ def _pnl_compute_and_package():
         csv_text = sio.getvalue()
 
     return xlsx_bytes, csv_text, 0
-
 
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
