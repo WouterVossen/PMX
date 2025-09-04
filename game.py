@@ -225,54 +225,6 @@ def _append_log_row(row: dict):
     header_needed = not os.path.exists(LOG_FILE) or os.path.getsize(LOG_FILE) == 0
     df.to_csv(LOG_FILE, mode="a", header=header_needed, index=False)
 
-# --------------------------
-# Positions as of LAST completed day (EOD prior to config.json)
-# --------------------------
-#st.markdown("### 📊 Positions as of last completed day")
-#
-#try:
-#    # Figure out the last curve date strictly before selected_date,
-#    # and format it EXACTLY like your CSV dates to keep string compares valid.
-#    curves_all = pd.read_csv(CURVE_FILE).copy()
-#    curves_all["date"] = curves_all["date"].astype(str)
-#    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
-#
-#    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
-#    if pd.isna(sel_dt):
-#        st.warning("Could not parse selected_date from config.json; showing nothing.")
-#        last_done_str = None
-#    else:
-#        prior = curves_all[curves_all["_dt"] < sel_dt]
-#        if prior.empty:
-#            last_done_str = None
-#        else:
-#            last_dt = prior["_dt"].max()
-#            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
-#            if os.name != "nt":
-#                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
-#            else:
-#                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
-#
-#    if last_done_str is None:
-#        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
-#    else:
-#        live_df = _load_log_df()
-#        if live_df.empty:
-#            st.info("No trades found in the live log.")
-#        else:
-#            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
-#            pos_rows = []
-#            for t in traders:
-#                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
-#                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
-#            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
-#            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
-#            st.dataframe(pos_table, use_container_width=True)
-#except Exception as e:
-#    st.warning(f"Could not render positions snapshot: {e}")
-
-#st.markdown("---")
-
 # ==========================
 # Trade entry
 # ==========================
@@ -673,6 +625,54 @@ def _pnl_compute_and_package():
         csv_text = sio.getvalue()
 
     return xlsx_bytes, csv_text, 0
+
+ --------------------------
+ Positions as of LAST completed day (EOD prior to config.json)
+ --------------------------
+st.markdown("### 📊 Positions as of last completed day")
+
+try:
+    # Figure out the last curve date strictly before selected_date,
+    # and format it EXACTLY like your CSV dates to keep string compares valid.
+    curves_all = pd.read_csv(CURVE_FILE).copy()
+    curves_all["date"] = curves_all["date"].astype(str)
+    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
+
+    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
+    if pd.isna(sel_dt):
+        st.warning("Could not parse selected_date from config.json; showing nothing.")
+        last_done_str = None
+    else:
+        prior = curves_all[curves_all["_dt"] < sel_dt]
+        if prior.empty:
+            last_done_str = None
+        else:
+            last_dt = prior["_dt"].max()
+            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
+            if os.name != "nt":
+                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
+            else:
+                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
+
+    if last_done_str is None:
+        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
+    else:
+        live_df = _load_log_df()
+        if live_df.empty:
+            st.info("No trades found in the live log.")
+        else:
+            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
+            pos_rows = []
+            for t in traders:
+                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
+                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
+            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
+            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
+            st.dataframe(pos_table, use_container_width=True)
+except Exception as e:
+    st.warning(f"Could not render positions snapshot: {e}")
+
+st.markdown("---")
 
 # ==========================
 # P&L snapshot (same numbers as Excel "Summary")
