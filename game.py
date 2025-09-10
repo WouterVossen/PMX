@@ -177,7 +177,14 @@ def _live_positions_from_log(trader: str, upto_date_str: str):
     key = _norm_trader_key(trader)
     df["trader_key"] = df["trader"].astype(str).str.strip().str.lower()
     df = df[df["trader_key"] == key]
-    df = df[df["date"].astype(str) <= str(upto_date_str)]  # string compare to match CSV format
+    # --- FIX: compare real datetimes, not strings ---
+    df["_dt"] = pd.to_datetime(df["date"], errors="coerce", infer_datetime_format=True)
+    cutoff_dt = pd.to_datetime(upto_date_str, errors="coerce", infer_datetime_format=True)
+    if pd.isna(cutoff_dt):
+        cutoff_dt = df["_dt"].max()
+    df = df[df["_dt"] <= cutoff_dt]
+    # --- END FIX ---
+
     pos = {m: 0 for m in MONTH_ORDER}
     for _, r in df.iterrows():
         ttype = str(r.get("type", "")).lower()
