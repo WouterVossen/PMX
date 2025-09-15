@@ -636,96 +636,96 @@ def _pnl_compute_and_package():
 # --------------------------
 # Positions as of LAST completed day (EOD prior to config.json)
 # --------------------------
-st.markdown("### 📊 Positions as of last completed day")
-
-try:
-    # Figure out the last curve date strictly before selected_date,
-    # and format it EXACTLY like your CSV dates to keep string compares valid.
-    curves_all = pd.read_csv(CURVE_FILE).copy()
-    curves_all["date"] = curves_all["date"].astype(str)
-    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
-
-    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
-    if pd.isna(sel_dt):
-        st.warning("Could not parse selected_date from config.json; showing nothing.")
-        last_done_str = None
-    else:
-        prior = curves_all[curves_all["_dt"] < sel_dt]
-        if prior.empty:
-            last_done_str = None
-        else:
-            last_dt = prior["_dt"].max()
-            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
-            if os.name != "nt":
-                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
-            else:
-                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
-
-    if last_done_str is None:
-        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
-    else:
-        live_df = _load_log_df()
-        if live_df.empty:
-            st.info("No trades found in the live log.")
-        else:
-            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
-            pos_rows = []
-            for t in traders:
-                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
-                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
-            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
-            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
-            st.dataframe(pos_table, use_container_width=True)
-except Exception as e:
-    st.warning(f"Could not render positions snapshot: {e}")
-
-st.markdown("---")
+#st.markdown("### 📊 Positions as of last completed day")
+#
+#try:
+#    # Figure out the last curve date strictly before selected_date,
+#    # and format it EXACTLY like your CSV dates to keep string compares valid.
+#    curves_all = pd.read_csv(CURVE_FILE).copy()
+#    curves_all["date"] = curves_all["date"].astype(str)
+#    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
+#
+#    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
+#    if pd.isna(sel_dt):
+#        st.warning("Could not parse selected_date from config.json; showing nothing.")
+#        last_done_str = None
+#    else:
+#        prior = curves_all[curves_all["_dt"] < sel_dt]
+#        if prior.empty:
+#            last_done_str = None
+#        else:
+#            last_dt = prior["_dt"].max()
+#            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
+#            if os.name != "nt":
+#                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
+#            else:
+#                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
+#
+#    if last_done_str is None:
+#        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
+#    else:
+#        live_df = _load_log_df()
+#        if live_df.empty:
+#            st.info("No trades found in the live log.")
+#        else:
+#            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
+#            pos_rows = []
+#            for t in traders:
+#                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
+#                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
+#            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
+#            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
+#            st.dataframe(pos_table, use_container_width=True)
+#except Exception as e:
+#    st.warning(f"Could not render positions snapshot: {e}")
+#
+#st.markdown("---")
 #
 # ==========================
 # P&L snapshot (same numbers as Excel "Summary")
 # ==========================
-st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
-
-try:
-    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
-
-    summary_df = None
-
-    if xlsx_bytes:
-        from io import BytesIO
-        bio = BytesIO(xlsx_bytes)
-        xl = pd.ExcelFile(bio)
-        if "Summary" in xl.sheet_names:
-            summary_df = xl.parse("Summary")
-
-    elif csv_text:
-        import io
-        raw = csv_text
-        if "# Summary" in raw:
-            summary_part = raw.split("# Summary", 1)[1].strip()
-            if summary_part:
-                summary_df = pd.read_csv(io.StringIO(summary_part))
-
-    if summary_df is not None and not summary_df.empty:
-        # Normalize column names just in case
-        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
-        summary_df.rename(columns={
-            "total_pnl": "total_pnl",
-            "days_played": "days_played",
-            "trader": "trader"
-        }, inplace=True)
-        # Sort by total_pnl desc to match the pack
-        if "total_pnl" in summary_df.columns:
-            summary_df = summary_df.sort_values("total_pnl", ascending=False)
-        st.dataframe(summary_df, use_container_width=True)
-        if pending:
-            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
-    else:
-        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
-
-except Exception as e:
-    st.warning(f"Could not render P&L leaderboard: {e}")
-    
+#st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
+#
+#try:
+#    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
+#
+#    summary_df = None
+#
+#    if xlsx_bytes:
+#        from io import BytesIO
+#        bio = BytesIO(xlsx_bytes)
+#        xl = pd.ExcelFile(bio)
+#        if "Summary" in xl.sheet_names:
+#            summary_df = xl.parse("Summary")
+#
+#    elif csv_text:
+#        import io
+#        raw = csv_text
+#        if "# Summary" in raw:
+#            summary_part = raw.split("# Summary", 1)[1].strip()
+#            if summary_part:
+#                summary_df = pd.read_csv(io.StringIO(summary_part))
+#
+#    if summary_df is not None and not summary_df.empty:
+#        # Normalize column names just in case
+#        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
+#        summary_df.rename(columns={
+#            "total_pnl": "total_pnl",
+#            "days_played": "days_played",
+#            "trader": "trader"
+#        }, inplace=True)
+#        # Sort by total_pnl desc to match the pack
+#        if "total_pnl" in summary_df.columns:
+#            summary_df = summary_df.sort_values("total_pnl", ascending=False)
+#        st.dataframe(summary_df, use_container_width=True)
+#        if pending:
+#            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
+#    else:
+#        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
+#
+#except Exception as e:
+#    st.warning(f"Could not render P&L leaderboard: {e}")
+#    
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
 password = st.text_input("Enter admin password to download trade log", type="password")
