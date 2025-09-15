@@ -155,6 +155,7 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/10/2025 9:57,9/10/2025,Bart,outright,Sep,Sell,15750,50,,,
 9/10/2025 9:57,9/10/2025,Bart,outright,Oct,Sell,15300,50,,,
 9/10/2025 9:58,9/10/2025,Danish Suhaimi,outright,Oct,Sell,15300,20,,,
+9/10/2025 9:58,9/10/2025,sofie,outright,Oct,Sell,15300,50,,,
 9/10/2025 9:58,9/10/2025,Erica,outright,Oct,Buy,15400,60,,,
 9/10/2025 9:58,9/10/2025,Erica,outright,Nov,Buy,14650,30,,,
 9/10/2025 9:58,9/10/2025,elisa,outright,Sep,Sell,15750,30,,,
@@ -165,3 +166,5 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/10/2025 10:18,9/10/2025,Benji,outright,Oct,Sell,15300,100,,,
 9/10/2025 10:19,9/10/2025,Benji,outright,Nov,Sell,14550,100,,,
 9/11/2025 9:39,9/11/2025,Benji,outright,Oct,Buy,15550,100,,,
+9/12/2025 10:05,9/12/2025,Erica,outright,Oct,Sell,15450,30,,,
+9/12/2025 10:05,9/12/2025,Erica,outright,Nov,Sell,14500,30,,,
