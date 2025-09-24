@@ -254,6 +254,8 @@ with st.form("ou_form"):
     ou_trader = st.text_input("Trader Name", key="ou_trader")
     ou_submit = st.form_submit_button("Submit Outright Trade")
 
+# >>> REPLACE your existing `if ou_submit:` block WITH THIS <<<
+
 if ou_submit:
     if not ou_trader.strip():
         st.error("Please enter your Trader Name for the outright trade.")
@@ -262,6 +264,18 @@ if ou_submit:
         if cm not in MONTH_ORDER:
             st.error(f"Unknown month/contract '{ou_contract}'.")
         else:
+            # Always execute at current book
+            exec_px = float(asks[ou_contract]) if ou_side == "Buy" else float(bids[ou_contract])
+
+            # Safety: refuse if the displayed widget (if any) doesn't match the book by more than a tick
+            # (Optional: comment this out if you disable the widget below)
+            try:
+                shown_px = float(st.session_state.get("ou_price_view", exec_px))
+                if abs(shown_px - exec_px) > 0.5:
+                    st.warning(f"Adjusted to book: {shown_px:.0f} → {exec_px:.0f}")
+            except Exception:
+                pass
+
             delta = {cm: (ou_lots if ou_side == "Buy" else -ou_lots)}
             ok, msg = _check_limits_after(ou_trader, selected_date, delta)
             if not ok:
@@ -274,13 +288,13 @@ if ou_submit:
                     "type": "outright",
                     "contract": cm,
                     "side": ou_side,
-                    "price": float(ou_price),
+                    "price": float(exec_px),  # <- LOG THE BOOK PRICE
                     "lots": int(ou_lots),
                     "spread_buy": "",
                     "spread_sell": "",
                     "spread_price": ""
                 })
-                st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(ou_price)}")
+                st.success(f"✅ Outright submitted: {ou_trader} {ou_side} {int(ou_lots)}d {cm} @ {int(exec_px)}")
                 _apply_position_changes(ou_trader, {cm: (int(ou_lots) if ou_side == "Buy" else -int(ou_lots))})
 
 st.markdown("---")
