@@ -215,3 +215,5 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/24/2025 10:07,9/24/2025,CLT,outright,Nov,Sell,14350,50,,,
 9/24/2025 10:08,9/24/2025,Erica,outright,Oct,Sell,15200,30,,,
 9/24/2025 10:08,9/24/2025,Erica,outright,Nov,Sell,14350,30,,,
+9/25/2025 9:40,9/25/2025,Danish Suhaimi,outright,Oct,Sell,14750,10,,,
+9/25/2025 10:05,9/25/2025,Benji,outright,Oct,Sell,14750,100,,,
