@@ -301,31 +301,88 @@ st.markdown("---")
 
 # ---------- SPREAD ----------
 st.markdown("**Calendar Spread (Buy one month / Sell another)**")
+
+# --- Session-state defaults for dependent selectors ---
+if "sp_buy" not in st.session_state:
+    st.session_state.sp_buy = contracts_today[0]
+if "sp_sell" not in st.session_state or st.session_state.sp_sell == st.session_state.sp_buy:
+    # pick the first month that's not the current buy
+    for _m in contracts_today:
+        if _m != st.session_state.sp_buy:
+            st.session_state.sp_sell = _m
+            break
+
+def _on_buy_change():
+    """When BUY month changes, ensure SELL != BUY and refresh options immediately."""
+    if st.session_state.sp_sell == st.session_state.sp_buy:
+        for _m in contracts_today:
+            if _m != st.session_state.sp_buy:
+                st.session_state.sp_sell = _m
+                break
+    st.rerun()
+
+def _on_sell_change():
+    """When SELL month changes to equal BUY, flip BUY to a different month and refresh."""
+    if st.session_state.sp_sell == st.session_state.sp_buy:
+        for _m in contracts_today:
+            if _m != st.session_state.sp_sell:
+                st.session_state.sp_buy = _m
+                break
+    st.rerun()
+
+# --- Live, dependent selectors (outside the form so they update immediately) ---
+sA, sB = st.columns([1.2, 1.2])
+with sA:
+    st.selectbox(
+        "Buy month",
+        options=contracts_today,
+        key="sp_buy",
+        on_change=_on_buy_change,
+    )
+with sB:
+    sell_opts = [m for m in contracts_today if m != st.session_state.sp_buy]
+    # If current sell is now invalid (equal to buy), force a valid default
+    if st.session_state.sp_sell not in sell_opts:
+        st.session_state.sp_sell = sell_opts[0]
+    st.selectbox(
+        "Sell month",
+        options=sell_opts,
+        key="sp_sell",
+        on_change=_on_sell_change,
+    )
+
+# --- The rest of the spread inputs & submit live inside a form ---
 with st.form("sp_form"):
-    s1, s2, s3, s4 = st.columns([1.2, 1.2, 1, 1.2])
+    s3, s4 = st.columns([1, 1.2])
 
-    sp_buy_raw  = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
-    sp_sell_raw = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy_raw], key="sp_sell")
-    sp_lots     = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
+    sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
 
-    # Auto-fill spread: buy at ask, sell at bid => spread = ask(buy) - bid(sell)
-    default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
-    sp_price = s4.number_input("Spread Price (auto-filled when you press submit)", value=default_spread, step=1.0, key="sp_price")
+    # Auto-fill spread at current book: ask(buy) - bid(sell)
+    _buy_raw  = st.session_state.sp_buy
+    _sell_raw = st.session_state.sp_sell
+    default_spread = float(asks[_buy_raw]) - float(bids[_sell_raw])
+    sp_price = s4.number_input(
+        "Spread Price (auto-filled when you press submit)",
+        value=default_spread,
+        step=1.0,
+        key="sp_price",
+    )
 
     sp_trader = st.text_input("Trader Name", key="sp_trader")
     sp_submit = st.form_submit_button("Submit Spread Trade")
 
 if sp_submit:
-    sp_buy  = _canon_month(sp_buy_raw)
-    sp_sell = _canon_month(sp_sell_raw)
+    sp_buy  = _canon_month(_buy_raw)
+    sp_sell = _canon_month(_sell_raw)
 
     if sp_buy == sp_sell:
         st.error("Choose two different months for a spread.")
     elif sp_buy not in MONTH_ORDER or sp_sell not in MONTH_ORDER:
-        st.error(f"Unknown months in spread: BUY '{sp_buy_raw}' / SELL '{sp_sell_raw}'.")
+        st.error(f"Unknown months in spread: BUY '{_buy_raw}' / SELL '{_sell_raw}'.")
     elif not sp_trader.strip():
         st.error("Please enter your Trader Name for the spread.")
     else:
+        # Delta is atomic across both legs; big sizes allow clean reversals at max slate.
         delta = {sp_buy: int(sp_lots), sp_sell: -int(sp_lots)}
         ok, msg = _check_limits_after(sp_trader, selected_date, delta)
         if not ok:
@@ -345,7 +402,7 @@ if sp_submit:
                 "spread_sell": sp_sell,
                 "spread_price": float(sp_price)
             })
-            # Outright audit legs (executable marks used)
+            # Outright audit legs at executable marks
             _append_log_row({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
@@ -353,7 +410,7 @@ if sp_submit:
                 "type": "outright",
                 "contract": sp_buy,
                 "side": "Buy",
-                "price": float(asks[sp_buy_raw]),
+                "price": float(asks[_buy_raw]),
                 "lots": int(sp_lots),
                 "spread_buy": "",
                 "spread_sell": "",
@@ -366,7 +423,7 @@ if sp_submit:
                 "type": "outright",
                 "contract": sp_sell,
                 "side": "Sell",
-                "price": float(bids[sp_sell_raw]),
+                "price": float(bids[_sell_raw]),
                 "lots": int(sp_lots),
                 "spread_buy": "",
                 "spread_sell": "",
