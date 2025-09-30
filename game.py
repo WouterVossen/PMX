@@ -38,7 +38,7 @@ selected_date = config.get("current_day")  # e.g. "9/1/2025"
 curve_df = pd.read_csv(CURVE_FILE)
 curve_today = curve_df[curve_df["date"] == selected_date].copy()
 
-st.title("🚢 Panamax Freight Paper Trading Game")
+st.title("🚢 Panamax Paper Trading Game")
 
 # ---- Boot-time risk guard: require a non-empty trade log (or template) before trading ----
 def _ensure_log_exists():
