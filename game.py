@@ -647,6 +647,94 @@ def _pnl_compute_and_package():
 
     return xlsx_bytes, csv_text, 0
 
+def _fmt_csv_date(dt_like):
+    """Render a date exactly like your CSV (e.g. 9/30/2025)."""
+    dt = pd.to_datetime(dt_like, errors="coerce")
+    if pd.isna(dt):
+        return str(dt_like)
+    if os.name != "nt":
+        return dt.strftime("%-m/%-d/%Y")
+    else:
+        return dt.strftime("%#m/%#d/%Y")
+
+def _auto_close_month(month_to_close: str, closing_date_str: str):
+    """
+    For each trader, closes net exposure in `month_to_close` on `closing_date_str`:
+      - Long qty -> SELL at closing BID
+      - Short qty -> BUY at closing ASK
+    Appends trades to LOG_FILE with date=closing_date_str and timestamp = {closing_date} 23:59:59.
+    Returns (# of traders closed, total lots closed).
+    """
+    cm = _canon_month(month_to_close)
+    cd = _fmt_csv_date(closing_date_str)
+
+    # Find closing marks
+    curves_all = pd.read_csv(CURVE_FILE).copy()
+    curves_all["contract"] = curves_all["contract"].astype(str).map(_canon_month)
+    row = curves_all[(curves_all["date"].astype(str) == cd) & (curves_all["contract"] == cm)]
+    if row.empty:
+        st.error(f"No forward curve for {cm} on {cd}. Add that row to forward_curves.csv first.")
+        return 0, 0
+
+    bid_close = float(row.iloc[0]["bid"])
+    ask_close = float(row.iloc[0]["ask"])
+    ts = f"{pd.to_datetime(cd).strftime('%Y-%m-%d')} 23:59:59"
+
+    # Who traded?
+    tl = _load_log_df()
+    if tl.empty:
+        st.info("No trades in the log; nothing to close.")
+        return 0, 0
+    traders = sorted(set(str(t) for t in tl["trader"].dropna().unique()))
+
+    traders_closed = 0
+    lots_total = 0
+
+    for t in traders:
+        pos = _live_positions_from_log(t, cd)  # positions up to and including closing date
+        q = int(pos.get(cm, 0))
+        if q == 0:
+            continue
+
+        if q > 0:
+            # Close longs: SELL at BID
+            _append_log_row({
+                "timestamp": ts,
+                "date": cd,
+                "trader": t,
+                "type": "outright",
+                "contract": cm,
+                "side": "Sell",
+                "price": float(bid_close),
+                "lots": int(q),
+                "spread_buy": "",
+                "spread_sell": "",
+                "spread_price": ""
+            })
+            _apply_position_changes(t, {cm: -q})
+        else:
+            # Close shorts: BUY at ASK
+            qabs = -q
+            _append_log_row({
+                "timestamp": ts,
+                "date": cd,
+                "trader": t,
+                "type": "outright",
+                "contract": cm,
+                "side": "Buy",
+                "price": float(ask_close),
+                "lots": int(qabs),
+                "spread_buy": "",
+                "spread_sell": "",
+                "spread_price": ""
+            })
+            _apply_position_changes(t, {cm: qabs})
+
+        traders_closed += 1
+        lots_total += abs(q)
+
+    return traders_closed, lots_total
+
 # --------------------------
 # Positions as of LAST completed day (EOD prior to config.json)
 # --------------------------
@@ -772,6 +860,30 @@ if password == "freightadmintrader":
         )
     if pending:
         st.warning(f"Some trades have no next-day curve yet (P&L pending): {pending} row(s). Upload the next day’s forward_curves to finalize.")
+        st.markdown("### 🧮 Month-End Close-Out")
+
+    # Default to the last available date for the chosen month
+    cm_default = "Sep" if "Sep" in MONTH_ORDER else MONTH_ORDER[0]
+    cm_choice = st.selectbox("Month to close", options=MONTH_ORDER, index=MONTH_ORDER.index(cm_default))
+
+    # Compute default closing date from curves
+    try:
+        _cur = pd.read_csv(CURVE_FILE)
+        _cur["date_dt"] = pd.to_datetime(_cur["date"], errors="coerce")
+        _cur["contract"] = _cur["contract"].astype(str).map(_canon_month)
+        _last_dt = _cur.loc[_cur["contract"] == cm_choice, "date_dt"].max()
+        default_cd = _fmt_csv_date(_last_dt) if pd.notna(_last_dt) else _fmt_csv_date("9/30/2025")
+    except Exception:
+        default_cd = _fmt_csv_date("9/30/2025")
+
+    close_date_in = st.text_input("Closing date (exactly as in forward_curves.csv)", value=default_cd)
+    if st.button(f"Close all open {cm_choice} positions at {close_date_in} bid/ask"):
+        n_traders, n_lots = _auto_close_month(cm_choice, close_date_in)
+        if n_traders > 0:
+            st.success(f"✅ Closed {n_traders} trader(s), {n_lots} lots total in {cm_choice} at {close_date_in}. "
+                       "Re-download the P&L pack to view realized closure.")
+        else:
+            st.info(f"No open {cm_choice} positions to close as of {close_date_in}.")
 
     st.markdown("### 🔄 Restore / Replace Live Trade Log")
     up = st.file_uploader("Upload master trader_log.csv to replace the live log", type=["csv"], key="restore_log")
