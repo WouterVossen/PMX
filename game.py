@@ -352,14 +352,14 @@ with box:
         )
 
     # --- BODY: lots, auto-filled spread, trader, submit ---
-    s3, s4 = st.columns([1, 1.2])
+      # Place Lots and Spread Price side-by-side
+    s3, s4 = st.columns([1, 1])
     sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
 
-    # Calculate default spread at BOOK; we still recompute on submit to avoid stale inputs.
     _buy_raw  = st.session_state.sp_buy
     _sell_raw = st.session_state.sp_sell
     default_spread = float(asks[_buy_raw]) - float(bids[_sell_raw])
-    st.number_input(
+    sp_price = s4.number_input(
         "Spread Price (auto-filled when you press submit)",
         value=default_spread,
         step=1.0,
