@@ -226,3 +226,7 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 9/26/2025 10:20,9/26/2025,elisa,outright,Oct,Sell,14550,70,,,
 9/26/2025 10:22,9/26/2025,Bart,outright,Oct,Buy,14650,50,,,
 9/26/2025 10:22,9/26/2025,Bart,outright,Nov,Buy,13900,50,,,
+9/29/2025 9:48,9/29/2025,Erica,outright,Oct,Sell,14350,30,,,
+9/29/2025 10:14,9/29/2025,Bart,spread,,,,100,Oct,Sep,1150
+9/29/2025 10:14,9/29/2025,Bart,outright,Oct,Buy,14450,100,,,
+9/29/2025 10:14,9/29/2025,Bart,outright,Sep,Sell,15300,100,,,
