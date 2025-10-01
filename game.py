@@ -514,11 +514,21 @@ def _pnl_compute_and_package():
     tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
     df = tl.copy()
+    # --- make string ops safe ---
+    for col in ["type", "side", "contract", "trader", "spread_buy", "spread_sell", "timestamp", "date"]:
+        if col not in df.columns:
+            df[col] = ""
+        df[col] = df[col].astype(str)
+
+# normalize values we compare on later
+    df["type"] = df["type"].str.strip().str.lower()
+    df["side"] = df["side"].str.strip().str.lower()
+
     df["_ts"] = _to_ts(df["timestamp"])
 
     # We still tag spread legs, but we won’t exclude them anymore
     df["is_spread_leg"] = False
-    spreads = df[df["type"].str.lower() == "spread"].copy()
+    spreads = df[df["type"] == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
         lots = int(pd.to_numeric(r.get("lots", 0), errors="coerce"))
@@ -549,7 +559,7 @@ def _pnl_compute_and_package():
             df.loc[leg_sell.index[:1], "is_spread_leg"] = True
 
     # ✅ FIX: include all outrights, regardless of spread-leg tag
-    outs = df[df["type"].str.lower() == "outright"].copy()
+    outs = df[df["type"] == "outright"].copy()
 
     # trades strictly before selected_date (ignore today's trades)
     outs["date_dt"] = _to_ts(outs["date"])
