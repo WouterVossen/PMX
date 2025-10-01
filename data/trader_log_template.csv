@@ -1,3 +1,5 @@
 timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,spread_price
-10/1/2025 9:20,10/1/2025,Wouter,outright,Oct,Buy,14800,5,,,
-
+9/1/2025 9:20,10/1/2025,w,outright,Oct,Buy,14800,5,,,
+9/1/2025 9:20,10/1/2025,w,spread,,,,30,Nov,Oct,-650
+9/1/2025 9:20,10/1/2025,w,outright,Nov,Buy,14050,30,,,
+9/1/2025 9:20,10/1/2025,w,outright,Oct,Sell,14700,30,,,
