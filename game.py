@@ -853,9 +853,9 @@ except Exception as e:
 
 st.markdown("---")
 
- ==========================
- P&L snapshot (same numbers as Excel "Summary")
- ==========================
+# ==========================
+# P&L snapshot (same numbers as Excel "Summary")
+# ==========================
 st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
 
 try:
