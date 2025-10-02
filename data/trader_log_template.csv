@@ -1,5 +1,21 @@
 timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,spread_price
-9/1/2025 9:20,10/1/2025,w,outright,Oct,Buy,14800,5,,,
-9/1/2025 9:20,10/1/2025,w,spread,,,,30,Nov,Oct,-650
-9/1/2025 9:20,10/1/2025,w,outright,Nov,Buy,14050,30,,,
-9/1/2025 9:20,10/1/2025,w,outright,Oct,Sell,14700,30,,,
+10/1/2025 9:24,10/1/2025,Carlos,outright,Nov,Sell,13200,80,,,
+10/1/2025 9:26,10/1/2025,CLT,outright,Dec,Buy,12550,50,,,
+10/1/2025 9:26,10/1/2025,CLT,outright,Nov,Sell,13200,150,,,
+10/1/2025 9:27,10/1/2025,Carlos,outright,Jan,Buy,11150,20,,,
+10/1/2025 9:27,10/1/2025,Carlos,outright,Oct,Sell,13550,20,,,
+10/1/2025 9:28,10/1/2025,Wouter,outright,Jan,Buy,11150,100,,,
+10/1/2025 9:28,10/1/2025,Wouter,outright,Oct,Sell,13550,100,,,
+10/1/2025 9:28,10/1/2025,Wouter,outright,Nov,Sell,13200,100,,,
+10/1/2025 9:33,10/1/2025,elisa,outright,Oct,Sell,13550,30,,,
+10/1/2025 9:33,10/1/2025,elisa,outright,Nov,Sell,13200,30,,,
+10/1/2025 9:33,10/1/2025,kj,outright,Nov,Buy,13300,30,,,
+10/1/2025 9:55,10/1/2025,david,spread,,,,100,Dec,Oct,-1000
+10/1/2025 9:55,10/1/2025,david,outright,Dec,Buy,12550,100,,,
+10/1/2025 9:55,10/1/2025,david,outright,Oct,Sell,13550,100,,,
+10/1/2025 9:55,10/1/2025,david,spread,,,,100,Jan,Nov,-2050
+10/1/2025 9:55,10/1/2025,david,outright,Jan,Buy,11150,100,,,
+10/1/2025 9:55,10/1/2025,david,outright,Nov,Sell,13200,100,,,
+10/1/2025 9:58,10/1/2025,sofie,outright,Oct,Sell,13550,50,,,
+10/1/2025 9:58,10/1/2025,sofie,outright,Nov,Sell,13200,50,,,
+10/1/2025 10:00,10/1/2025,david,outright,Oct,Sell,13550,100,,,
