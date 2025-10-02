@@ -38,7 +38,7 @@ selected_date = config.get("current_day")  # e.g. "9/1/2025"
 curve_df = pd.read_csv(CURVE_FILE)
 curve_today = curve_df[curve_df["date"] == selected_date].copy()
 
-st.title("🚢 Panamax Paper Trading Game")
+st.title("🚢 Panamax Freight Paper Trading Game")
 
 # ---- Boot-time risk guard: require a non-empty trade log (or template) before trading ----
 def _ensure_log_exists():
@@ -101,8 +101,8 @@ PER_MONTH_CAP = 200   # |net| per single contract month
 SLATE_CAP     = 100   # |sum of net across months|
 
 # Canonical month set (UI + CSV must map here)
-MONTH_ORDER = ["Oct", "Nov", "Dec", 'Jan']
-_CANON_MAP = {"oct": "Oct", "nov": "Nov", "dec": "Dec", "jan": "Jan", }
+MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]
+_CANON_MAP = {"sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
 
 def _canon_month(s: str) -> str:
     if s is None:
@@ -301,96 +301,36 @@ st.markdown("---")
 
 # ---------- SPREAD ----------
 st.markdown("**Calendar Spread (Buy one month / Sell another)**")
+with st.form("sp_form"):
+    s1, s2, s3, s4 = st.columns([1.2, 1.2, 1, 1.2])
 
-# Keep dependent selectors reactive, but render the WHOLE UI inside one box.
-box = st.container(border=True)  # requires Streamlit >= 1.31; harmless no-op if older
+    sp_buy_raw  = s1.selectbox("Buy month", options=contracts_today, key="sp_buy")
+    sp_sell_raw = s2.selectbox("Sell month", options=[m for m in contracts_today if m != sp_buy_raw], key="sp_sell")
+    sp_lots     = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
 
-# --- session-state bootstrapping ---
-if "sp_buy" not in st.session_state:
-    st.session_state.sp_buy = contracts_today[0]
-if "sp_sell" not in st.session_state or st.session_state.sp_sell == st.session_state.sp_buy:
-    for _m in contracts_today:
-        if _m != st.session_state.sp_buy:
-            st.session_state.sp_sell = _m
-            break
-
-def _on_buy_change():
-    if st.session_state.sp_sell == st.session_state.sp_buy:
-        for _m in contracts_today:
-            if _m != st.session_state.sp_buy:
-                st.session_state.sp_sell = _m
-                break
-    st.rerun()
-
-def _on_sell_change():
-    if st.session_state.sp_sell == st.session_state.sp_buy:
-        for _m in contracts_today:
-            if _m != st.session_state.sp_sell:
-                st.session_state.sp_buy = _m
-                break
-    st.rerun()
-
-with box:
-    # --- HEAD ROW: BUY / SELL selectors (now inside the same visual box) ---
-    sA, sB = st.columns([1.2, 1.2])
-    with sA:
-        st.selectbox(
-            "Buy month",
-            options=contracts_today,
-            key="sp_buy",
-            on_change=_on_buy_change,
-        )
-    with sB:
-        sell_opts = [m for m in contracts_today if m != st.session_state.sp_buy]
-        if st.session_state.sp_sell not in sell_opts:
-            st.session_state.sp_sell = sell_opts[0]
-        st.selectbox(
-            "Sell month",
-            options=sell_opts,
-            key="sp_sell",
-            on_change=_on_sell_change,
-        )
-
-    # --- BODY: lots, auto-filled spread, trader, submit ---
-      # Place Lots and Spread Price side-by-side
-    s3, s4 = st.columns([1, 1])
-    sp_lots = s3.number_input("Lots (days)", min_value=1, step=1, value=1, key="sp_lots")
-
-    _buy_raw  = st.session_state.sp_buy
-    _sell_raw = st.session_state.sp_sell
-    default_spread = float(asks[_buy_raw]) - float(bids[_sell_raw])
-    sp_price = s4.number_input(
-        "Spread Price (auto-filled when you press submit)",
-        value=default_spread,
-        step=1.0,
-        key="sp_price",
-    )
+    # Auto-fill spread: buy at ask, sell at bid => spread = ask(buy) - bid(sell)
+    default_spread = float(asks[sp_buy_raw]) - float(bids[sp_sell_raw])
+    sp_price = s4.number_input("Spread Price (auto-filled when you press submit)", value=default_spread, step=1.0, key="sp_price")
 
     sp_trader = st.text_input("Trader Name", key="sp_trader")
+    sp_submit = st.form_submit_button("Submit Spread Trade")
 
-    # Use a normal button instead of st.form so the top selectors stay reactive but all is in one box.
-    submit_spread = st.button("Submit Spread Trade")
-
-if submit_spread:
-    sp_buy  = _canon_month(_buy_raw)
-    sp_sell = _canon_month(_sell_raw)
+if sp_submit:
+    sp_buy  = _canon_month(sp_buy_raw)
+    sp_sell = _canon_month(sp_sell_raw)
 
     if sp_buy == sp_sell:
         st.error("Choose two different months for a spread.")
     elif sp_buy not in MONTH_ORDER or sp_sell not in MONTH_ORDER:
-        st.error(f"Unknown months in spread: BUY '{_buy_raw}' / SELL '{_sell_raw}'.")
+        st.error(f"Unknown months in spread: BUY '{sp_buy_raw}' / SELL '{sp_sell_raw}'.")
     elif not sp_trader.strip():
         st.error("Please enter your Trader Name for the spread.")
     else:
-        # Risk check on combined delta (supports reversals at max slate)
         delta = {sp_buy: int(sp_lots), sp_sell: -int(sp_lots)}
         ok, msg = _check_limits_after(sp_trader, selected_date, delta)
         if not ok:
             st.error(f"❌ {msg}")
         else:
-            # Recompute executable spread at submit time (avoid stale widget value)
-            exec_spread = float(asks[_buy_raw]) - float(bids[_sell_raw])
-
             # Summary spread row
             _append_log_row({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -403,9 +343,9 @@ if submit_spread:
                 "lots": int(sp_lots),
                 "spread_buy": sp_buy,
                 "spread_sell": sp_sell,
-                "spread_price": float(exec_spread)
+                "spread_price": float(sp_price)
             })
-            # Outright audit legs at executable marks
+            # Outright audit legs (executable marks used)
             _append_log_row({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "date": selected_date,
@@ -413,7 +353,7 @@ if submit_spread:
                 "type": "outright",
                 "contract": sp_buy,
                 "side": "Buy",
-                "price": float(asks[_buy_raw]),
+                "price": float(asks[sp_buy_raw]),
                 "lots": int(sp_lots),
                 "spread_buy": "",
                 "spread_sell": "",
@@ -426,13 +366,13 @@ if submit_spread:
                 "type": "outright",
                 "contract": sp_sell,
                 "side": "Sell",
-                "price": float(bids[_sell_raw]),
+                "price": float(bids[sp_sell_raw]),
                 "lots": int(sp_lots),
                 "spread_buy": "",
                 "spread_sell": "",
                 "spread_price": ""
             })
-            st.success(f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(exec_spread)}")
+            st.success(f"✅ Spread submitted: {sp_trader} BUY {int(sp_lots)}d {sp_buy} / SELL {int(sp_lots)}d {sp_sell} @ {int(sp_price)}")
             _apply_position_changes(sp_trader, {sp_buy: int(sp_lots), sp_sell: -int(sp_lots)})
 
 st.markdown("---")
@@ -514,21 +454,11 @@ def _pnl_compute_and_package():
     tl["date"]       = tl["date"].astype(str)
     tl["trader_key"] = tl["trader"].astype(str).str.strip().str.lower()
     df = tl.copy()
-    # --- make string ops safe ---
-    for col in ["type", "side", "contract", "trader", "spread_buy", "spread_sell", "timestamp", "date"]:
-        if col not in df.columns:
-            df[col] = ""
-        df[col] = df[col].astype(str)
-
-# normalize values we compare on later
-    df["type"] = df["type"].str.strip().str.lower()
-    df["side"] = df["side"].str.strip().str.lower()
-
     df["_ts"] = _to_ts(df["timestamp"])
 
     # We still tag spread legs, but we won’t exclude them anymore
     df["is_spread_leg"] = False
-    spreads = df[df["type"] == "spread"].copy()
+    spreads = df[df["type"].str.lower() == "spread"].copy()
     for _, r in spreads.iterrows():
         tkey = r["trader_key"]
         lots = int(pd.to_numeric(r.get("lots", 0), errors="coerce"))
@@ -559,7 +489,7 @@ def _pnl_compute_and_package():
             df.loc[leg_sell.index[:1], "is_spread_leg"] = True
 
     # ✅ FIX: include all outrights, regardless of spread-leg tag
-    outs = df[df["type"] == "outright"].copy()
+    outs = df[df["type"].str.lower() == "outright"].copy()
 
     # trades strictly before selected_date (ignore today's trades)
     outs["date_dt"] = _to_ts(outs["date"])
@@ -808,96 +738,96 @@ def _auto_close_month(month_to_close: str, closing_date_str: str):
 # --------------------------
 # Positions as of LAST completed day (EOD prior to config.json)
 # --------------------------
-st.markdown("### 📊 Positions as of last completed day")
-
-try:
-    # Figure out the last curve date strictly before selected_date,
-    # and format it EXACTLY like your CSV dates to keep string compares valid.
-    curves_all = pd.read_csv(CURVE_FILE).copy()
-    curves_all["date"] = curves_all["date"].astype(str)
-    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
-
-    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
-    if pd.isna(sel_dt):
-        st.warning("Could not parse selected_date from config.json; showing nothing.")
-        last_done_str = None
-    else:
-        prior = curves_all[curves_all["_dt"] < sel_dt]
-        if prior.empty:
-            last_done_str = None
-        else:
-            last_dt = prior["_dt"].max()
-            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
-            if os.name != "nt":
-                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
-            else:
-                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
-
-    if last_done_str is None:
-        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
-    else:
-        live_df = _load_log_df()
-        if live_df.empty:
-            st.info("No trades found in the live log.")
-        else:
-            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
-            pos_rows = []
-            for t in traders:
-                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
-                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
-            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
-            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
-            st.dataframe(pos_table, use_container_width=True)
-except Exception as e:
-    st.warning(f"Could not render positions snapshot: {e}")
-
-st.markdown("---")
-
+#st.markdown("### 📊 Positions as of last completed day")
+#
+#try:
+#    # Figure out the last curve date strictly before selected_date,
+#    # and format it EXACTLY like your CSV dates to keep string compares valid.
+#    curves_all = pd.read_csv(CURVE_FILE).copy()
+#    curves_all["date"] = curves_all["date"].astype(str)
+#    curves_all["_dt"] = pd.to_datetime(curves_all["date"], errors="coerce", infer_datetime_format=True)
+#
+#    sel_dt = pd.to_datetime(selected_date, errors="coerce", infer_datetime_format=True)
+#    if pd.isna(sel_dt):
+#        st.warning("Could not parse selected_date from config.json; showing nothing.")
+#        last_done_str = None
+#    else:
+#        prior = curves_all[curves_all["_dt"] < sel_dt]
+#        if prior.empty:
+#            last_done_str = None
+#        else:
+#            last_dt = prior["_dt"].max()
+#            # Render in the same style as the CSV (e.g., 9/1/2025 not 2025-09-01)
+#            if os.name != "nt":
+#                last_done_str = pd.Timestamp(last_dt).strftime("%-m/%-d/%Y")
+#            else:
+#                last_done_str = pd.Timestamp(last_dt).strftime("%#m/%#d/%Y")
+#
+#    if last_done_str is None:
+#        st.info("No prior day found before the current config date — positions snapshot unavailable yet.")
+#    else:
+#        live_df = _load_log_df()
+#        if live_df.empty:
+#            st.info("No trades found in the live log.")
+#        else:
+#            traders = sorted(set(str(t) for t in live_df["trader"].dropna().unique()))
+#            pos_rows = []
+#            for t in traders:
+#                pos = _live_positions_from_log(t, last_done_str)  # EOD prior day snapshot
+#                pos_rows.append({"trader": t, **pos, "slate": sum(pos.values())})
+#            pos_table = pd.DataFrame(pos_rows).sort_values("trader")
+#            st.caption(f"Snapshot date: **{last_done_str}** (EOD prior to config day)")
+#            st.dataframe(pos_table, use_container_width=True)
+#except Exception as e:
+#    st.warning(f"Could not render positions snapshot: {e}")
+#
+#st.markdown("---")
+#
 # ==========================
 # P&L snapshot (same numbers as Excel "Summary")
 # ==========================
-st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
-
-try:
-    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
-
-    summary_df = None
-
-    if xlsx_bytes:
-        from io import BytesIO
-        bio = BytesIO(xlsx_bytes)
-        xl = pd.ExcelFile(bio)
-        if "Summary" in xl.sheet_names:
-            summary_df = xl.parse("Summary")
-
-    elif csv_text:
-        import io
-        raw = csv_text
-        if "# Summary" in raw:
-            summary_part = raw.split("# Summary", 1)[1].strip()
-            if summary_part:
-                summary_df = pd.read_csv(io.StringIO(summary_part))
-
-    if summary_df is not None and not summary_df.empty:
-        # Normalize column names just in case
-        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
-        summary_df.rename(columns={
-            "total_pnl": "total_pnl",
-            "days_played": "days_played",
-            "trader": "trader"
-        }, inplace=True)
-        # Sort by total_pnl desc to match the pack
-        if "total_pnl" in summary_df.columns:
-            summary_df = summary_df.sort_values("total_pnl", ascending=False)
-        st.dataframe(summary_df, use_container_width=True)
-        if pending:
-            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
-    else:
-        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
-
-except Exception as e:
-    st.warning(f"Could not render P&L leaderboard: {e}")
-    
+#st.markdown("### 🏁 P&L Leaderboard (as of selected day)")
+#
+#try:
+#    xlsx_bytes, csv_text, pending = _pnl_compute_and_package()
+#
+#    summary_df = None
+#
+#    if xlsx_bytes:
+#        from io import BytesIO
+#        bio = BytesIO(xlsx_bytes)
+#        xl = pd.ExcelFile(bio)
+#        if "Summary" in xl.sheet_names:
+#            summary_df = xl.parse("Summary")
+#
+#    elif csv_text:
+#        import io
+#        raw = csv_text
+#        if "# Summary" in raw:
+#            summary_part = raw.split("# Summary", 1)[1].strip()
+#            if summary_part:
+#                summary_df = pd.read_csv(io.StringIO(summary_part))
+#
+#    if summary_df is not None and not summary_df.empty:
+#        # Normalize column names just in case
+#        summary_df.columns = [c.strip().lower() for c in summary_df.columns]
+#        summary_df.rename(columns={
+#            "total_pnl": "total_pnl",
+#            "days_played": "days_played",
+#            "trader": "trader"
+#        }, inplace=True)
+#        # Sort by total_pnl desc to match the pack
+#        if "total_pnl" in summary_df.columns:
+#            summary_df = summary_df.sort_values("total_pnl", ascending=False)
+#        st.dataframe(summary_df, use_container_width=True)
+#        if pending:
+#            st.caption("⚠️ Some trades lack next-day curves; P&L will finalize when the next day’s curve is uploaded.")
+#    else:
+#        st.info("No P&L available yet. Ensure there are trades before today and curves up to the current config date.")
+#
+#except Exception as e:
+#    st.warning(f"Could not render P&L leaderboard: {e}")
+#    
 # ---------- Admin download / restore ----------
 st.markdown("🔐 **Admin Access**")
 password = st.text_input("Enter admin password to download trade log", type="password")
@@ -933,7 +863,7 @@ if password == "freightadmintrader":
         st.markdown("### 🧮 Month-End Close-Out")
 
     # Default to the last available date for the chosen month
-    cm_default = "Oct" if "Oct" in MONTH_ORDER else MONTH_ORDER[0]
+    cm_default = "Sep" if "Sep" in MONTH_ORDER else MONTH_ORDER[0]
     cm_choice = st.selectbox("Month to close", options=MONTH_ORDER, index=MONTH_ORDER.index(cm_default))
 
     # Compute default closing date from curves
