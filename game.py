@@ -102,7 +102,7 @@ SLATE_CAP     = 100   # |sum of net across months|
 
 # Canonical month set (UI + CSV must map here)
 MONTH_ORDER = ["Oct", "Nov", "Dec", "Jan"]
-_CANON_MAP = {"oct": "Oct", "nov": "Nov", "dec": "Dec", "jan": "Jan", }
+_CANON_MAP = {"oct": "Oct", "nov": "Nov", "dec": "Dec", "jan": "Jan"}
 
 def _canon_month(s: str) -> str:
     if s is None:
