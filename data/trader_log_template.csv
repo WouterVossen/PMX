@@ -19,3 +19,4 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 10/1/2025 9:58,10/1/2025,sofie,outright,Oct,Sell,13550,50,,,
 10/1/2025 9:58,10/1/2025,sofie,outright,Nov,Sell,13200,50,,,
 10/1/2025 10:00,10/1/2025,david,outright,Oct,Sell,13550,100,,,
+10/2/2025 10:05,10/2/2025,Bart,outright,Nov,Sell,13300,100,,,
