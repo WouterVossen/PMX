@@ -27,3 +27,5 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 10/3/2025 9:59,10/3/2025,kj,outright,Nov,Buy,13700,70,,,
 10/3/2025 10:02,10/3/2025,elisa,outright,Oct,Buy,14000,45,,,
 10/3/2025 10:02,10/3/2025,elisa,outright,Nov,Buy,13700,45,,,
+10/3/2025 12:30,10/3/2025,Wouter,outright,Oct,Buy,14000,20,,,
+10/3/2025 12:30,10/3/2025,Wouter,outright,Nov,Buy,13700,50,,,
