@@ -101,8 +101,8 @@ PER_MONTH_CAP = 200   # |net| per single contract month
 SLATE_CAP     = 100   # |sum of net across months|
 
 # Canonical month set (UI + CSV must map here)
-MONTH_ORDER = ["Sep", "Oct", "Nov", "Dec"]
-_CANON_MAP = {"sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+MONTH_ORDER = ["Oct", "Nov", "Dec", "Jan"]
+_CANON_MAP = {"oct": "Oct", "nov": "Nov", "dec": "Dec", "jan": "Jan", }
 
 def _canon_month(s: str) -> str:
     if s is None:
@@ -863,7 +863,7 @@ if password == "freightadmintrader":
         st.markdown("### 🧮 Month-End Close-Out")
 
     # Default to the last available date for the chosen month
-    cm_default = "Sep" if "Sep" in MONTH_ORDER else MONTH_ORDER[0]
+    cm_default = "Oct" if "Oct" in MONTH_ORDER else MONTH_ORDER[0]
     cm_choice = st.selectbox("Month to close", options=MONTH_ORDER, index=MONTH_ORDER.index(cm_default))
 
     # Compute default closing date from curves
