@@ -35,4 +35,6 @@ timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,sprea
 10/6/2025 9:49,10/6/2025,CLT,outright,Nov,Buy,13450,150,,,
 10/6/2025 9:49,10/6/2025,david,outright,Jan,Sell,11150,50,,,
 10/6/2025 10:10,10/6/2025,Carlos,outright,Jan,Buy,11350,50,,,
-10/6/2025 10:10,10/6/2025,Wouter,outright,Oct,Buy,13850,50,,,
+10/6/2025 10:10,10/6/2025,Wouter,outright,Oct,Buy,13850,100,,,
+10/6/2025 10:10,10/6/2025,Wouter,outright,Nov,Buy,13450,150,,,
+10/6/2025 9:49,10/6/2025,Wouter,outright,Jan,Sell,11150,100,,,
