@@ -1,4 +1,4 @@
-`,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,spread_price
+timestamp,date,trader,type,contract,side,price,lots,spread_buy,spread_sell,spread_price
 10/1/2025 9:24,10/1/2025,Carlos,outright,Nov,Sell,13200,80,,,
 10/1/2025 9:26,10/1/2025,CLT,outright,Dec,Buy,12550,50,,,
 10/1/2025 9:26,10/1/2025,CLT,outright,Nov,Sell,13200,150,,,
@@ -109,3 +109,9 @@
 10/22/2025 10:12,10/22/2025,Erica,outright,Nov,Buy,15200,60,,,
 10/22/2025 10:16,10/22/2025,Danish Suhaimi,outright,Nov,Buy,15200,50,,,
 10/23/2025 10:47,10/23/2025,Wouter,outright,Nov,Sell,14900,200,,,
+10/24/2025 9:24,10/24/2025,kj,outright,Oct,Buy,14900,200,,,
+10/24/2025 9:24,10/24/2025,CLT,outright,Nov,Sell,14700,100,,,
+10/24/2025 9:30,10/24/2025,kj,spread,,,,100,Nov,Oct,200
+10/24/2025 9:30,10/24/2025,kj,outright,Nov,Buy,14800,100,,,
+10/24/2025 9:30,10/24/2025,kj,outright,Oct,Sell,14800,100,,,
+10/24/2025 9:30,10/24/2025,kj,outright,Jan,Sell,11600,100,,,
